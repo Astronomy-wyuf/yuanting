@@ -1,0 +1,12 @@
+include: package:flutter_lints/flutter.yaml
+
+linter:
+  rules:
+    # 播放器/下载服务内部使用 debugPrint 输出诊断日志
+    avoid_print: false
+    # 异步回调中访问 context 的场景较多（先经 mounted 检查），关闭该规则避免误报
+    use_build_context_synchronously: false
+
+analyzer:
+  errors:
+    unused_import: warning
