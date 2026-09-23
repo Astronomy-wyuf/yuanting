@@ -131,6 +131,7 @@ class StorageLimitSheet extends StatelessWidget {
   }) {
     return showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
       showDragHandle: true,
       builder: (_) => StorageLimitSheet(settings: settings, options: options),
     );

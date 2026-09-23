@@ -38,10 +38,14 @@ class DownloadService extends ChangeNotifier {
   /// 可选：开下 / 继续前刷新时效直链
   Future<String> Function(DownloadTask task)? urlResolver;
 
+  /// 可选：下载直链时附加 HTTP 头（如 CDN Referer）
+  Future<Map<String, String>> Function(DownloadTask task)? headerResolver;
+
   DownloadService({
     required this.repository,
     required this.settings,
     this.urlResolver,
+    this.headerResolver,
   });
 
   int get maxStorageMB => settings.downloadMaxStorageMB;
@@ -432,12 +436,18 @@ class DownloadService extends ChangeNotifier {
         startByte = await file.length();
       }
 
+      final playHeaders = await headerResolver?.call(current) ?? const {};
+      final reqHeaders = <String, String>{
+        ...playHeaders,
+        if (startByte > 0) 'range': 'bytes=$startByte-',
+      };
+
       final res = await _dio.get<ResponseBody>(
         current.url,
         cancelToken: token,
         options: Options(
           responseType: ResponseType.stream,
-          headers: startByte > 0 ? {'range': 'bytes=$startByte-'} : null,
+          headers: reqHeaders.isEmpty ? null : reqHeaders,
         ),
       );
 

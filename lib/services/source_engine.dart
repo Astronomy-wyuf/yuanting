@@ -12,6 +12,7 @@ import '../models/book_source.dart';
 import '../models/chapter.dart';
 import '../models/search_captcha.dart';
 import '../models/search_record.dart';
+import '../utils/http_header_encoding.dart';
 import '../utils/json_path.dart';
 import '../utils/rule_parser.dart';
 import 'source_auth_bootstrap.dart';
@@ -349,7 +350,9 @@ class SourceEngine {
 
     // 旧路径：无独立 url、无 crypto → GET chapter.audioUrl + parser
     if (!hasTokenEndpoint && !hasCrypto) {
-      if (parser == null || type == 'direct') return chapter.audioUrl;
+      if (parser == null || type == 'direct') {
+        return _maybeFinalizePlayUrl(source, book, chapter.audioUrl);
+      }
       final pageBody =
           await _fetchText(chapter.audioUrl, audioSection, context: context);
       final items = RuleParser.parse(pageBody, parser, context: context);
@@ -359,7 +362,11 @@ class SourceEngine {
       if (resolved.isEmpty) {
         throw SourceRuleException('音频直链解析失败: ${chapter.title}');
       }
-      return _absoluteUrl(resolved, chapter.audioUrl);
+      return _maybeFinalizePlayUrl(
+        source,
+        book,
+        _absoluteUrl(resolved, chapter.audioUrl),
+      );
     }
 
     final text = await _requestSection(
@@ -374,7 +381,93 @@ class SourceEngine {
     if (playUrl.isEmpty) {
       throw SourceRuleException('音频直链解析失败: ${chapter.title}');
     }
-    return playUrl;
+    return _maybeFinalizePlayUrl(source, book, playUrl);
+  }
+
+  /// CDN（如幻听）会 302 到 OSS；播放器跟跳时常丢掉自定义 Referer 导致 404。
+  /// 这里在解析阶段就带着 playHeaders 跟完跳转，把最终地址交给播放器。
+  Future<String> _maybeFinalizePlayUrl(
+    BookSource source,
+    Book? book,
+    String url,
+  ) async {
+    final headers = resolvePlayHeaders(source, book: book);
+    return _followPlayRedirects(url, headers);
+  }
+
+  Future<String> _followPlayRedirects(
+    String url,
+    Map<String, String> playHeaders,
+  ) async {
+    if (playHeaders.isEmpty) return url;
+    if (!url.startsWith('http://') && !url.startsWith('https://')) return url;
+
+    var current = Uri.parse(url).toString();
+    for (var hop = 0; hop < 5; hop++) {
+      final probe = await _probePlayUrl(current, playHeaders);
+      if (probe == null) return current;
+      final code = probe.statusCode;
+      if (code == 200 || code == 206) return current;
+      if (code != 301 &&
+          code != 302 &&
+          code != 303 &&
+          code != 307 &&
+          code != 308) {
+        return current;
+      }
+      final loc = probe.location;
+      if (loc == null || loc.isEmpty) return current;
+      current = resolveRedirectLocation(current, loc).toString();
+    }
+    return current;
+  }
+
+  Future<({int statusCode, String? location})?> _probePlayUrl(
+    String url,
+    Map<String, String> playHeaders,
+  ) async {
+    bool ok(int? c) =>
+        c != null &&
+        (c < 400 ||
+            c == 301 ||
+            c == 302 ||
+            c == 303 ||
+            c == 307 ||
+            c == 308);
+
+    try {
+      final res = await _dio.head(
+        url,
+        options: Options(
+          headers: playHeaders,
+          followRedirects: false,
+          validateStatus: ok,
+        ),
+      );
+      return (
+        statusCode: res.statusCode ?? 0,
+        location: res.headers.value('location'),
+      );
+    } catch (_) {
+      // 部分 CDN 拒 HEAD，改用 Range GET
+      try {
+        final res = await _dio.get<List<int>>(
+          url,
+          options: Options(
+            headers: {...playHeaders, 'Range': 'bytes=0-0'},
+            responseType: ResponseType.bytes,
+            followRedirects: false,
+            validateStatus: ok,
+          ),
+        );
+        return (
+          statusCode: res.statusCode ?? 0,
+          location: res.headers.value('location'),
+        );
+      } catch (_) {
+        return null;
+      }
+    }
   }
 
   bool needsAudioResolve(BookSource source) {
@@ -385,6 +478,44 @@ class SourceEngine {
     if (((audioRule['url'] as String?) ?? '').isNotEmpty) return true;
     final type = (audioRule['parser'] as Map?)?['type'] as String?;
     return type != null && type != 'direct';
+  }
+
+  /// 播放/下载直链时附加的 HTTP 头（如 CDN 强制 Referer）。
+  /// 仅使用显式配置的 `audio.playHeaders`。
+  /// 不要回退 `audio.headers`：那是取链/API 请求头（常含 Cookie、Authorization），
+  /// 误用会让听友/听吧等直链播放带上错误 Referer 并强制跟跳，导致 Source error。
+  Map<String, String> resolvePlayHeaders(
+    BookSource source, {
+    Book? book,
+  }) {
+    final audio = _sectionOrNull(source.rule, 'audio');
+    if (audio == null) return const {};
+
+    final playRaw = audio['playHeaders'];
+    if (playRaw is! Map || playRaw.isEmpty) return const {};
+
+    final bookKey = _resolveBookKey(
+      source,
+      fallback: book?.sourceBookId ?? '',
+      detailUrl: book?.detailUrl ?? '',
+      title: book?.title ?? '',
+    );
+    final context = _idContext(
+      bookKey,
+      detailUrl: book?.detailUrl ?? '',
+      title: book?.title ?? '',
+    );
+    context['siteUrl'] = source.url;
+
+    final headers = <String, String>{};
+    for (final e in playRaw.entries) {
+      final key = e.key.toString();
+      if (key.isEmpty) continue;
+      final value = renderTemplate(e.value.toString(), context).trim();
+      if (value.isEmpty) continue;
+      headers[key] = value;
+    }
+    return headers;
   }
 
   /// 签名/加密直链必须现取；旧二次解析默认可 eager。
@@ -844,7 +975,17 @@ class SourceEngine {
     if (decrypt == null) return text;
 
     String cipherOuter = text;
-    final payloadPath = rp?['payloadPath'] as String?;
+    var payloadPath = rp?['payloadPath'] as String?;
+    // 兼容：响应是 {"payload":"<密文>"} 但规则漏写 payloadPath
+    if ((payloadPath == null || payloadPath.isEmpty) &&
+        text.trimLeft().startsWith('{')) {
+      try {
+        final json = jsonDecode(text);
+        if (json is Map && json['payload'] != null) {
+          payloadPath = r'$.payload';
+        }
+      } catch (_) {}
+    }
     if (payloadPath != null && payloadPath.isNotEmpty) {
       try {
         final json = jsonDecode(text);

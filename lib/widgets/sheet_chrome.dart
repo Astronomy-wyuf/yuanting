@@ -9,50 +9,58 @@ class AppSheetScaffold extends StatelessWidget {
   final String? subtitle;
   final Widget child;
 
+  /// 额外底部留白（避开 Shell 迷你条 / Dock 等）
+  final double bottomClearance;
+
   const AppSheetScaffold({
     super.key,
     required this.eyebrow,
     required this.title,
     this.subtitle,
     required this.child,
+    this.bottomClearance = 0,
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final brand = BrandColors.of(context);
-    final bottom = MediaQuery.viewInsetsOf(context).bottom;
+    final keyboard = MediaQuery.viewInsetsOf(context).bottom;
+    final maxH = MediaQuery.sizeOf(context).height * 0.85;
 
     return SafeArea(
       child: Padding(
-        padding: EdgeInsets.only(bottom: bottom),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                eyebrow,
-                style: theme.textTheme.labelMedium?.copyWith(
-                  color: brand.accent,
-                  letterSpacing: 1.2,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(title, style: theme.textTheme.headlineSmall),
-              if (subtitle != null) ...[
-                const SizedBox(height: 6),
+        padding: EdgeInsets.only(bottom: keyboard + bottomClearance),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: maxH),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
                 Text(
-                  subtitle!,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
+                  eyebrow,
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: brand.accent,
+                    letterSpacing: 1.2,
                   ),
                 ),
+                const SizedBox(height: 6),
+                Text(title, style: theme.textTheme.headlineSmall),
+                if (subtitle != null) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    subtitle!,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                child,
               ],
-              const SizedBox(height: 16),
-              child,
-            ],
+            ),
           ),
         ),
       ),

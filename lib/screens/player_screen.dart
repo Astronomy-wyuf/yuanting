@@ -33,11 +33,71 @@ class PlayerScreen extends ConsumerWidget {
                   icon: const Icon(Icons.keyboard_arrow_down, size: 28),
                 ),
               ),
-              const Expanded(
-                child: ProtoEmpty(
-                  icon: Icons.music_off_outlined,
-                  title: '暂无播放',
-                  subtitle: '从书架或搜书页选一本书开始',
+              Expanded(
+                child: player.loading
+                    ? const Center(child: CircularProgressIndicator())
+                    : ProtoEmpty(
+                        icon: Icons.music_off_outlined,
+                        title: '暂无播放',
+                        subtitle: '从书架或搜书页选一本书开始',
+                        action: FilledButton.tonal(
+                          onPressed: () => Navigator.of(context).maybePop(),
+                          child: const Text('返回'),
+                        ),
+                      ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (player.loading && player.chapters.isEmpty) {
+      final book = player.currentBook!;
+      return Scaffold(
+        body: SafeArea(
+          child: Column(
+            children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: IconButton(
+                  onPressed: () => Navigator.of(context).maybePop(),
+                  icon: const Icon(Icons.keyboard_arrow_down, size: 28),
+                ),
+              ),
+              Expanded(
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 32),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        BookCover(
+                          url: book.coverUrl,
+                          width: 120,
+                          height: 160,
+                          radius: 8,
+                        ),
+                        const SizedBox(height: 20),
+                        Text(
+                          book.title,
+                          textAlign: TextAlign.center,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleMedium,
+                        ),
+                        const SizedBox(height: 24),
+                        const CircularProgressIndicator(),
+                        const SizedBox(height: 12),
+                        Text(
+                          '正在准备播放…',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -354,8 +414,10 @@ class PlayerScreen extends ConsumerWidget {
       onSleep: () => PlayerSleepSheet.show(context, player),
       onSkip: () => _showSkip(context, player),
       onClosePlaylist: () {
-        player.clearSession();
-        Navigator.of(context).maybePop();
+        // 先退出播放页再清会话，避免清完后仍停在「暂无播放」
+        Navigator.of(context).maybePop().whenComplete(() {
+          player.clearSession();
+        });
       },
     );
   }

@@ -89,42 +89,23 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
   }
 
   Future<void> _importFromUrl() async {
-    final controller = TextEditingController();
+    // 控制器放在对话框 State 里，避免取消时路由尚未卸完就 dispose，
+    // 触发 _AnimatedDefaultTextStyle / _dependents.isEmpty 断言。
     final url = await showDialog<String>(
       context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: const Text('网络导入'),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            keyboardType: TextInputType.url,
-            textInputAction: TextInputAction.done,
-            decoration: const InputDecoration(
-              hintText: 'https://example.com/source.json',
-              labelText: '书源 JSON 链接',
-            ),
-            onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-              child: const Text('导入'),
-            ),
-          ],
-        );
-      },
+      builder: (ctx) => const _UrlImportDialog(),
     );
-    controller.dispose();
     if (url == null || url.isEmpty || !mounted) return;
 
+    // 点「导入」后链接框还在退场动画，立刻再叠加载框会踩 _dependents.isEmpty
+    await Future<void>.delayed(Duration.zero);
+    if (!mounted) return;
+
+    final nav = Navigator.of(context, rootNavigator: true);
     showDialog<void>(
       context: context,
       barrierDismissible: false,
+      useRootNavigator: true,
       builder: (_) => const PopScope(
         canPop: false,
         child: Center(
@@ -149,8 +130,12 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
     try {
       result = await ref.read(sourcesControllerProvider).importFromUrl(url);
     } finally {
-      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      if (mounted && nav.canPop()) nav.pop();
     }
+    // 等加载框卸完、列表 quiet 刷新落稳，再弹 Toast / 错误框
+    await Future<void>.delayed(Duration.zero);
+    if (!mounted) return;
+    await WidgetsBinding.instance.endOfFrame;
     if (!mounted) return;
     _showImportResult(result);
   }
@@ -228,6 +213,59 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
     }
   }
 
+  Future<void> _updateRemote(BookSource source) async {
+    if (!source.isRemote) return;
+
+    final nav = Navigator.of(context, rootNavigator: true);
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      useRootNavigator: true,
+      builder: (_) => const PopScope(
+        canPop: false,
+        child: Center(
+          child: Card(
+            child: Padding(
+              padding: EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('正在更新书源…'),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    SourceImportResult result;
+    try {
+      result =
+          await ref.read(sourcesControllerProvider).updateFromRemote(source);
+    } finally {
+      if (mounted && nav.canPop()) nav.pop();
+    }
+    await Future<void>.delayed(Duration.zero);
+    if (!mounted) return;
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
+
+    if (result.success || result.okCount > 0) {
+      _toast('「${source.name}」已更新');
+      if (result.errors.isNotEmpty) {
+        await _showCopyableError('部分更新失败', result.errors.join('\n'));
+      }
+    } else {
+      await _showCopyableError(
+        '更新失败',
+        result.errors.isNotEmpty ? result.errors.join('\n') : '未知错误',
+      );
+    }
+  }
+
   Future<void> _delete(BookSource source) async {
     final ok = await showDialog<bool>(
       context: context,
@@ -272,7 +310,7 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
               title: const Text('粘贴 JSON'),
               onTap: () {
                 Navigator.pop(ctx);
-                _importFromPaste();
+                _runAfterSheetClosed(_importFromPaste);
               },
             ),
             ListTile(
@@ -280,7 +318,7 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
               title: const Text('从文件导入'),
               onTap: () {
                 Navigator.pop(ctx);
-                _importFromFile();
+                _runAfterSheetClosed(_importFromFile);
               },
             ),
             ListTile(
@@ -289,7 +327,7 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
               subtitle: const Text('从 URL 下载书源 JSON'),
               onTap: () {
                 Navigator.pop(ctx);
-                _importFromUrl();
+                _runAfterSheetClosed(_importFromUrl);
               },
             ),
             const SizedBox(height: 8),
@@ -297,6 +335,14 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
         ),
       ),
     );
+  }
+
+  /// 等底部菜单关闭后再开下一层路由，避免叠动画把依赖树弄乱。
+  void _runAfterSheetClosed(Future<void> Function() action) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await action();
+    });
   }
 
   @override
@@ -373,6 +419,7 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
 
   Widget _tile(ThemeData theme, BookSource source) {
     final scheme = theme.colorScheme;
+    final remote = source.isRemote;
     return Opacity(
       opacity: source.enabled ? 1 : 0.7,
       child: ProtoCard(
@@ -392,7 +439,7 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Icon(
-                    Icons.cell_tower,
+                    remote ? Icons.cloud_outlined : Icons.folder_outlined,
                     size: 18,
                     color: source.enabled
                         ? BrandColors.of(context).accent
@@ -415,12 +462,16 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
                                   ?.copyWith(fontWeight: FontWeight.w500),
                             ),
                           ),
+                          const SizedBox(width: 6),
+                          _SourceKindChip(remote: remote),
                         ],
                       ),
                       const SizedBox(height: 2),
                       Text(
                         source.enabled
-                            ? '${source.url} · json 规则'
+                            ? (remote
+                                ? '${source.url} · 可在线更新'
+                                : '${source.url} · 本地规则')
                             : '已禁用 · 不参与聚合搜索',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -439,6 +490,15 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
             const SizedBox(height: 12),
             Row(
               children: [
+                if (remote) ...[
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => _updateRemote(source),
+                      child: const Text('更新'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
                 Expanded(
                   child: OutlinedButton(
                     onPressed: () => _edit(source),
@@ -460,6 +520,96 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// 本地 / 网络书源标识
+class _SourceKindChip extends StatelessWidget {
+  final bool remote;
+
+  const _SourceKindChip({required this.remote});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final label = remote ? '网络' : '本地';
+    final bg = remote
+        ? scheme.secondaryContainer
+        : scheme.surfaceContainerHighest;
+    final fg = remote
+        ? scheme.onSecondaryContainer
+        : scheme.onSurfaceVariant;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11,
+          height: 1.2,
+          fontWeight: FontWeight.w500,
+          color: fg,
+        ),
+      ),
+    );
+  }
+}
+
+/// 网络导入链接输入框。Controller 跟对话框 State 同生共死，
+/// 取消关闭时不会在路由动画期间提前 dispose。
+class _UrlImportDialog extends StatefulWidget {
+  const _UrlImportDialog();
+
+  @override
+  State<_UrlImportDialog> createState() => _UrlImportDialogState();
+}
+
+class _UrlImportDialogState extends State<_UrlImportDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(context, _controller.text.trim());
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('网络导入'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        keyboardType: TextInputType.url,
+        textInputAction: TextInputAction.done,
+        decoration: const InputDecoration(
+          hintText: 'https://example.com/source.json',
+          labelText: '书源 JSON 链接',
+        ),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _submit,
+          child: const Text('导入'),
+        ),
+      ],
     );
   }
 }

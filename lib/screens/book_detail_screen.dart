@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -138,12 +140,12 @@ class _BookDetailScreenState extends ConsumerState<BookDetailScreen> {
 
   Future<void> _afterStartPlay(PlayerController player) async {
     if (!mounted) return;
-    if (player.loadError != null) {
+    if (player.loadError != null || player.currentBook == null) {
+      final err = player.loadError ?? '起播失败';
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(player.loadError!)));
+          .showSnackBar(SnackBar(content: Text(err)));
       return;
     }
-    if (player.currentBook == null) return;
     if (!_inShelf) {
       await ref
           .read(bookshelfControllerProvider)
@@ -154,41 +156,80 @@ class _BookDetailScreenState extends ConsumerState<BookDetailScreen> {
 
   Future<void> _ensurePlayerRoute() async {
     if (!mounted) return;
-    // 已在播放页则不重复 push
     final loc = GoRouterState.of(context).uri.path;
     if (loc == '/player') return;
-    context.push('/player');
+    await context.push('/player');
   }
 
+  /// 等到章节会话就绪（不必等整章音频落盘），以便尽快进播放页。
+  Future<void> _waitSessionReady(PlayerController player, String bookId) async {
+    bool ready() =>
+        player.loadError != null ||
+        (!player.loading &&
+            player.chapters.isNotEmpty &&
+            player.currentBook?.id == bookId);
+    if (ready()) return;
+
+    final done = Completer<void>();
+    void listener() {
+      if (ready() && !done.isCompleted) done.complete();
+    }
+
+    player.addListener(listener);
+    try {
+      listener();
+      await done.future.timeout(const Duration(seconds: 45));
+    } finally {
+      player.removeListener(listener);
+    }
+  }
+
+  /// 章节目录就绪后即进播放页；音频解析/落盘在播放页缓冲，避免详情卡「播放中」。
   Future<void> _play({int startIndex = 0}) async {
     if (_starting) return;
-    _starting = true;
+    setState(() => _starting = true);
     try {
       final player = ref.read(playerControllerProvider);
       final book = _inShelf
           ? _book
           : _book.copyWith(addedAt: DateTime.now(), updatedAt: DateTime.now());
-      // 先进入播放页，再解析起播（章节点击也必须进播放页）
+      final playFuture = player.playBook(book, startIndex: startIndex);
+      try {
+        await _waitSessionReady(player, book.id);
+      } on TimeoutException {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('加载超时，请重试')),
+        );
+        return;
+      }
+      if (!mounted) return;
+      if (player.loadError != null ||
+          player.currentBook == null ||
+          player.chapters.isEmpty) {
+        await _afterStartPlay(player);
+        await playFuture;
+        return;
+      }
       await _ensurePlayerRoute();
-      await player.playBook(book, startIndex: startIndex);
       await _afterStartPlay(player);
+      // 起播/落盘继续后台进行
+      unawaited(playFuture);
     } finally {
-      _starting = false;
+      if (mounted) setState(() => _starting = false);
     }
   }
 
   Future<void> _continuePlay() async {
     if (_starting) return;
-    _starting = true;
+    setState(() => _starting = true);
     try {
       final player = ref.read(playerControllerProvider);
-      // 已有本会话但音频未加载（冷启动恢复）→ 真正续播
-      if (player.hasSession && player.currentBook?.id == _book.id) {
+      // 已有本会话且音频已就绪 → 直接进播放页
+      if (player.hasSession &&
+          player.currentBook?.id == _book.id &&
+          player.player.audioSource != null) {
         await _ensurePlayerRoute();
-        if (player.player.audioSource == null) {
-          await player.continueBook(_book);
-          await _afterStartPlay(player);
-        }
         return;
       }
       // 刷新书架记录，拿到最新 lastPlayChapterId
@@ -199,11 +240,30 @@ class _BookDetailScreenState extends ConsumerState<BookDetailScreen> {
           _inShelf = true;
         });
       }
+      final target = fresh ?? _book;
+      final playFuture = player.continueBook(target);
+      try {
+        await _waitSessionReady(player, target.id);
+      } on TimeoutException {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('加载超时，请重试')),
+        );
+        return;
+      }
+      if (!mounted) return;
+      if (player.loadError != null ||
+          player.currentBook == null ||
+          player.chapters.isEmpty) {
+        await _afterStartPlay(player);
+        await playFuture;
+        return;
+      }
       await _ensurePlayerRoute();
-      await player.continueBook(fresh ?? _book);
       await _afterStartPlay(player);
+      unawaited(playFuture);
     } finally {
-      _starting = false;
+      if (mounted) setState(() => _starting = false);
     }
   }
 
@@ -417,8 +477,9 @@ class _BookDetailScreenState extends ConsumerState<BookDetailScreen> {
                             children: [
                               Expanded(
                                 child: FilledButton.icon(
-                                  onPressed:
-                                      _chapters.isEmpty ? null : _continuePlay,
+                                  onPressed: _chapters.isEmpty || _starting
+                                      ? null
+                                      : _continuePlay,
                                   style: FilledButton.styleFrom(
                                     backgroundColor:
                                         BrandColors.of(context).accent,
@@ -429,8 +490,21 @@ class _BookDetailScreenState extends ConsumerState<BookDetailScreen> {
                                       borderRadius: BorderRadius.circular(12),
                                     ),
                                   ),
-                                  icon: const Icon(Icons.play_arrow, size: 20),
-                                  label: Text(_canResume ? '继续收听' : '开始播放'),
+                                  icon: _starting
+                                      ? const SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.white,
+                                          ),
+                                        )
+                                      : const Icon(Icons.play_arrow, size: 20),
+                                  label: Text(
+                                    _starting
+                                        ? '准备中…'
+                                        : (_canResume ? '继续收听' : '开始播放'),
+                                  ),
                                 ),
                               ),
                               const SizedBox(width: 8),
@@ -532,7 +606,7 @@ class _BookDetailScreenState extends ConsumerState<BookDetailScreen> {
     final scheme = theme.colorScheme;
     final brand = BrandColors.of(context);
     return InkWell(
-      onTap: () => _play(startIndex: chapter.index),
+      onTap: _starting ? null : () => _play(startIndex: chapter.index),
       borderRadius: BorderRadius.circular(8),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),

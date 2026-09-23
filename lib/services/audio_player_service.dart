@@ -69,6 +69,7 @@ class AudioPlayerService {
   Book? _book;
   List<Chapter> _chapters = [];
   List<String> _audioUrls = [];
+  Map<String, String> _playHeaders = const {};
   SkipConfig _skip = const SkipConfig();
   SleepTimerState _sleep = SleepTimerState.off;
   Timer? _countdownTimer;
@@ -186,11 +187,13 @@ class AudioPlayerService {
     required SkipConfig skip,
     double speed = 1.0,
     Future<String> Function(int index)? lazyResolve,
+    Map<String, String> playHeaders = const {},
   }) async {
     assert(lazyResolve != null || chapters.length == audioUrls.length);
     _book = book;
     _chapters = List.of(chapters);
     _audioUrls = List.of(audioUrls);
+    _playHeaders = Map.unmodifiable(playHeaders);
     _skip = skip;
     _lastIndex = -1;
     _lazyResolve = lazyResolve;
@@ -207,6 +210,17 @@ class AudioPlayerService {
       if (index < _audioUrls.length) {
         _audioUrls[index] = url;
       }
+      await _setSingleChapterSource(index, url);
+      _lastIndex = index;
+    } else if (_playHeaders.isNotEmpty) {
+      // ExoPlayer 跟跳会丢 Referer：有 playHeaders 时统一单章落盘播放
+      _lazyResolve = (i) async {
+        if (i >= 0 && i < _audioUrls.length && _audioUrls[i].isNotEmpty) {
+          return _audioUrls[i];
+        }
+        return _chapters[i].audioUrl;
+      };
+      final url = audioUrls[index];
       await _setSingleChapterSource(index, url);
       _lastIndex = index;
     } else {
@@ -234,23 +248,31 @@ class AudioPlayerService {
   }
 
   AudioSource _sourceFor(Chapter ch, String audioUrl, Book book) {
-    final uri = audioUrl.startsWith('/') ||
-            (audioUrl.length > 2 && audioUrl[1] == ':')
-        ? Uri.file(audioUrl)
-        : Uri.parse(audioUrl);
+    final isFile = _isLocalPath(audioUrl);
+    final uri = isFile ? Uri.file(audioUrl) : Uri.parse(audioUrl);
+    // 远程封面常需 Referer；通知栏拉封面无自定义头会 403，有 playHeaders 时不挂 artUri
+    final artUri = (!isFile && _playHeaders.isNotEmpty)
+        ? null
+        : (book.coverUrl != null && book.coverUrl!.startsWith('http')
+            ? Uri.tryParse(book.coverUrl!)
+            : null);
     return AudioSource.uri(
       uri,
+      // resolveAudio 已跟完跳转；此处带 Referer 直播最终地址（勿再整章落盘，否则切章卡顿）
+      headers: isFile || _playHeaders.isEmpty ? null : _playHeaders,
       tag: MediaItem(
         id: ch.id,
         title: ch.title,
         album: book.title,
         artist: book.author,
-        artUri: book.coverUrl != null && book.coverUrl!.startsWith('http')
-            ? Uri.tryParse(book.coverUrl!)
-            : null,
+        artUri: artUri,
       ),
     );
   }
+
+  bool _isLocalPath(String audioUrl) =>
+      audioUrl.startsWith('/') ||
+      (audioUrl.length > 2 && audioUrl[1] == ':');
 
   Future<void> _setSingleChapterSource(int index, String audioUrl) async {
     final book = _book;
@@ -310,21 +332,32 @@ class AudioPlayerService {
   Future<void> _playLazyIndex(int index, {required bool naturalAdvance}) async {
     final resolve = _lazyResolve;
     if (resolve == null) return;
-    final url = await resolve(index);
-    while (_audioUrls.length <= index) {
-      _audioUrls.add('');
+    // 手动切章：先停当前，避免解析等待期间旧音频继续播
+    if (!naturalAdvance) {
+      try {
+        await player.pause();
+      } catch (_) {}
     }
-    _audioUrls[index] = url;
-    await _setSingleChapterSource(index, url);
-    if (_skip.intro > 0) {
-      await player.seek(Duration(seconds: _skip.intro));
-    }
+    // 先切 UI / 进度章节，再解析起播，避免等网络时页面“不跟手”
     _lastIndex = index;
     onChapterChanged?.call(_chapters[index].id, index);
-    if (naturalAdvance) {
-      _onChapterStart(index, naturalAdvance: true);
+    try {
+      final url = await resolve(index);
+      while (_audioUrls.length <= index) {
+        _audioUrls.add('');
+      }
+      _audioUrls[index] = url;
+      await _setSingleChapterSource(index, url);
+      if (_skip.intro > 0) {
+        await player.seek(Duration(seconds: _skip.intro));
+      }
+      if (naturalAdvance) {
+        _onChapterStart(index, naturalAdvance: true);
+      }
+      await player.play();
+    } catch (e) {
+      onPlaybackError?.call(e);
     }
-    await player.play();
   }
 
   /// 用新 URL 重载当前章并尽量恢复进度（播放失败重试用）

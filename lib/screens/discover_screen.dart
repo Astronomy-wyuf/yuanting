@@ -221,69 +221,77 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
     final preferred = settings.preferredSourceId;
     final all = ctrl.sources;
     final sheetWidth = MediaQuery.sizeOf(context).width;
+    // 不用 rootNavigator：迷你条 / Dock 在 Shell.bottomNavigationBar，
+    // 根层弹窗会整屏盖住底部播放。
+    final hasMini = ref.read(playerControllerProvider).hasSession;
+    final clearBottom = (hasMini ? 72.0 : 0.0) + 56.0;
     showModalBottomSheet<void>(
       context: context,
-      useRootNavigator: true,
       showDragHandle: true,
       isScrollControlled: true,
       constraints: BoxConstraints(minWidth: sheetWidth, maxWidth: sheetWidth),
       builder: (ctx) {
         final brand = BrandColors.of(ctx);
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text('选择书源', style: Theme.of(ctx).textTheme.titleMedium),
-                const SizedBox(height: 12),
-                ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxHeight: MediaQuery.sizeOf(ctx).height * 0.45,
+        return Padding(
+          padding: EdgeInsets.only(bottom: clearBottom),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('选择书源', style: Theme.of(ctx).textTheme.titleMedium),
+                  const SizedBox(height: 12),
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: MediaQuery.sizeOf(ctx).height * 0.45,
+                    ),
+                    child: all.isEmpty
+                        ? Text(
+                            '暂无书源',
+                            style: Theme.of(ctx).textTheme.bodySmall,
+                          )
+                        : ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: all.length,
+                            itemBuilder: (_, i) {
+                              final s = all[i];
+                              return ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                title: Text(s.name),
+                                subtitle: Text(
+                                  s.enabled ? '已启用' : '已禁用',
+                                  style: Theme.of(ctx).textTheme.bodySmall,
+                                ),
+                                trailing: preferred == s.id ||
+                                        (preferred == null &&
+                                            ctrl.enabledSources.isNotEmpty &&
+                                            ctrl.enabledSources.first.id ==
+                                                s.id)
+                                    ? Icon(Icons.check, color: brand.accent)
+                                    : null,
+                                onTap: () async {
+                                  if (!s.enabled) await ctrl.toggle(s);
+                                  await settings.setPreferredSourceId(s.id);
+                                  if (ctx.mounted) Navigator.pop(ctx);
+                                  await _reload();
+                                },
+                              );
+                            },
+                          ),
                   ),
-                  child: all.isEmpty
-                      ? Text(
-                          '暂无书源',
-                          style: Theme.of(ctx).textTheme.bodySmall,
-                        )
-                      : ListView.builder(
-                          shrinkWrap: true,
-                          itemCount: all.length,
-                          itemBuilder: (_, i) {
-                            final s = all[i];
-                            return ListTile(
-                              contentPadding: EdgeInsets.zero,
-                              title: Text(s.name),
-                              subtitle: Text(
-                                s.enabled ? '已启用' : '已禁用',
-                                style: Theme.of(ctx).textTheme.bodySmall,
-                              ),
-                              trailing: preferred == s.id ||
-                                      (preferred == null &&
-                                          ctrl.enabledSources.isNotEmpty &&
-                                          ctrl.enabledSources.first.id == s.id)
-                                  ? Icon(Icons.check, color: brand.accent)
-                                  : null,
-                              onTap: () async {
-                                if (!s.enabled) await ctrl.toggle(s);
-                                await settings.setPreferredSourceId(s.id);
-                                if (ctx.mounted) Navigator.pop(ctx);
-                                await _reload();
-                              },
-                            );
-                          },
-                        ),
-                ),
-                const SizedBox(height: 8),
-                OutlinedButton(
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    context.push('/sources');
-                  },
-                  child: const Text('管理书源'),
-                ),
-              ],
+                  const SizedBox(height: 8),
+                  OutlinedButton(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      context.push('/sources');
+                    },
+                    child: const Text('管理书源'),
+                  ),
+                ],
+              ),
             ),
           ),
         );

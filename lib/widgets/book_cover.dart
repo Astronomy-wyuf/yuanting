@@ -60,11 +60,12 @@ class BookCover extends StatelessWidget {
           width: width,
           height: height,
           fit: BoxFit.cover,
-          httpHeaders: const {
+          httpHeaders: {
             'User-Agent':
                 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 '
                 '(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
             'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+            if (_imageReferer(imageUrl) case final ref?) 'Referer': ref,
           },
           fadeInDuration: const Duration(milliseconds: 180),
           placeholder: (_, __) => placeholder,
@@ -86,5 +87,20 @@ class BookCover extends StatelessWidget {
       ),
       child: child,
     );
+  }
+
+  /// 部分 CDN（如 guoguo）强制站点 Referer，否则封面 403。
+  static String? _imageReferer(String url) {
+    final lower = url.toLowerCase();
+    if (lower.contains('guoguo.org.cn') || lower.contains('huantingwang.com')) {
+      return 'https://huantingwang.com/';
+    }
+    try {
+      final u = Uri.parse(url);
+      if (u.hasScheme && u.host.isNotEmpty) {
+        return '${u.scheme}://${u.host}/';
+      }
+    } catch (_) {}
+    return null;
   }
 }

@@ -18,7 +18,7 @@ class StorageService {
     final path = p.join(dir, AppConstants.dbFileName);
     return openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -26,7 +26,11 @@ class StorageService {
 
   /// 后续升 version 时在此按 oldVersion 逐步迁移，禁止改动已发布的 [onCreate]。
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    // v1 → v2: …
+    if (oldVersion < 2) {
+      await db.execute(
+        "ALTER TABLE book_sources ADD COLUMN remote_url TEXT",
+      );
+    }
   }
 
   Future<void> _onCreate(Database db, int version) async {
@@ -40,7 +44,8 @@ class StorageService {
         description TEXT,
         rule_json TEXT NOT NULL,
         enabled INTEGER NOT NULL DEFAULT 1,
-        imported_at INTEGER NOT NULL
+        imported_at INTEGER NOT NULL,
+        remote_url TEXT
       )
     ''');
     await db.execute('''

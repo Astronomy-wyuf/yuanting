@@ -13,6 +13,9 @@ class BookSource {
   final bool enabled;
   final DateTime importedAt;
 
+  /// 网络导入时的 JSON 地址；空表示本地（粘贴/文件）导入。
+  final String? remoteUrl;
+
   const BookSource({
     required this.id,
     required this.name,
@@ -23,7 +26,10 @@ class BookSource {
     required this.rule,
     this.enabled = true,
     required this.importedAt,
+    this.remoteUrl,
   });
+
+  bool get isRemote => remoteUrl != null && remoteUrl!.trim().isNotEmpty;
 
   BookSource copyWith({
     String? id,
@@ -35,6 +41,7 @@ class BookSource {
     Map<String, dynamic>? rule,
     bool? enabled,
     DateTime? importedAt,
+    Object? remoteUrl = _unset,
   }) {
     return BookSource(
       id: id ?? this.id,
@@ -46,11 +53,20 @@ class BookSource {
       rule: rule ?? this.rule,
       enabled: enabled ?? this.enabled,
       importedAt: importedAt ?? this.importedAt,
+      remoteUrl: identical(remoteUrl, _unset)
+          ? this.remoteUrl
+          : remoteUrl as String?,
     );
   }
 
+  static const Object _unset = Object();
+
   /// 从书源规则 JSON（导入格式）构建 BookSource
-  factory BookSource.fromRuleJson(Map<String, dynamic> raw, {String? id}) {
+  factory BookSource.fromRuleJson(
+    Map<String, dynamic> raw, {
+    String? id,
+    String? remoteUrl,
+  }) {
     final site = (raw['site'] as Map?)?.cast<String, dynamic>() ?? {};
     return BookSource(
       id: id ?? 'src_${DateTime.now().microsecondsSinceEpoch}',
@@ -62,6 +78,7 @@ class BookSource {
       rule: raw,
       enabled: true,
       importedAt: DateTime.now(),
+      remoteUrl: remoteUrl,
     );
   }
 
@@ -75,6 +92,7 @@ class BookSource {
         'rule_json': jsonEncode(rule),
         'enabled': enabled ? 1 : 0,
         'imported_at': importedAt.millisecondsSinceEpoch,
+        'remote_url': remoteUrl,
       };
 
   factory BookSource.fromMap(Map<String, dynamic> map) => BookSource(
@@ -88,6 +106,7 @@ class BookSource {
         enabled: (map['enabled'] as num? ?? 1) == 1,
         importedAt: DateTime.fromMillisecondsSinceEpoch(
             (map['imported_at'] as num?)?.toInt() ?? 0),
+        remoteUrl: map['remote_url'] as String?,
       );
 
   /// 导出为书源规则 JSON（可再次导入的格式）

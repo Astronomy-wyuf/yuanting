@@ -29,5 +29,12 @@ final downloadServiceProvider =
       }
       return task.url;
     },
+    headerResolver: (DownloadTask task) async {
+      final book = await bookRepo.get(task.bookId);
+      if (book == null) return const {};
+      final source = await sourceRepo.get(book.sourceId);
+      if (source == null) return const {};
+      return engine.resolvePlayHeaders(source, book: book);
+    },
   );
 });

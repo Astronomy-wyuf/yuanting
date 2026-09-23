@@ -103,7 +103,13 @@ class _DownloadBookScreenState extends ConsumerState<DownloadBookScreen> {
     final player = ref.read(playerControllerProvider);
     await player.playBook(book, startIndex: idx);
     if (!mounted) return;
-    context.push('/player');
+    if (player.loadError != null || player.currentBook == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(player.loadError ?? '起播失败')),
+      );
+      return;
+    }
+    await context.push('/player');
   }
 
   @override

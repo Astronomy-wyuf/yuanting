@@ -53,6 +53,36 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
     return '一周前';
   }
 
+  Future<void> _confirmRemove(Book book) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('移出书架'),
+        content: Text('将《${book.title}》移出书架？收听进度将一并删除。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('移出'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final player = ref.read(playerControllerProvider);
+    if (player.currentBook?.id == book.id) {
+      await player.clearSession();
+    }
+    await ref.read(bookshelfControllerProvider).remove(book.id);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('已移出《${book.title}》')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final shelf = ref.watch(bookshelfControllerProvider);
@@ -140,6 +170,7 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
                             progress: _progressText(book),
                             onOpen: () =>
                                 context.push('/book-detail', extra: book),
+                            onRemove: () => _confirmRemove(book),
                           );
                         },
                       ),
@@ -154,11 +185,13 @@ class _ShelfTile extends StatelessWidget {
   final Book book;
   final String progress;
   final VoidCallback onOpen;
+  final VoidCallback onRemove;
 
   const _ShelfTile({
     required this.book,
     required this.progress,
     required this.onOpen,
+    required this.onRemove,
   });
 
   @override
@@ -166,6 +199,7 @@ class _ShelfTile extends StatelessWidget {
     final theme = Theme.of(context);
     return InkWell(
       onTap: onOpen,
+      onLongPress: onRemove,
       borderRadius: BorderRadius.circular(8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

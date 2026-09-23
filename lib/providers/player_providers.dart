@@ -80,6 +80,8 @@ class PlayerController extends ChangeNotifier {
         WakelockPlus.disable();
       }
       notifyListeners();
+    }, onError: (Object e, StackTrace st) {
+      _onPlaybackError(e);
     });
     service.player.currentIndexStream.listen((i) {
       // lazy 单曲源 index 恒为 0，章节由 onChapterChanged 维护
@@ -89,21 +91,21 @@ class PlayerController extends ChangeNotifier {
         _playbackRetryCount = 0;
         notifyListeners();
       }
-    });
+    }, onError: (_) {});
     service.player.positionStream.listen((p) {
       position = p;
       notifyListeners();
-    });
+    }, onError: (_) {});
     service.player.durationStream.listen((d) {
       if (d != null && d != duration) {
         duration = d;
         notifyListeners();
       }
-    });
+    }, onError: (_) {});
     service.sleepTimerState.addListener(() => notifyListeners());
     service.player.speedStream.listen((s) {
       speed = s;
-    });
+    }, onError: (_) {});
   }
 
   AudioPlayer get player => service.player;
@@ -147,17 +149,8 @@ class PlayerController extends ChangeNotifier {
         throw Exception('暂无章节，无法播放');
       }
 
-      // 2. 解析播放地址：lazy 仅解析当前章；否则离线优先 + 可选并发二次解析
-      final lazy = source != null && engine.isLazyAudioResolve(source);
-      final urls = lazy
-          ? await _resolveLazySeedUrls(book, chs, source,
-              index: startIndex.clamp(0, chs.length - 1))
-          : await _resolveAudioUrls(book, chs, source);
-
-      // 3. 片头片尾：书籍级 > 书源级 > 全局默认
+      // 2. 片头片尾 + 章节回填（先于音频解析，便于详情页尽快进播放页）
       skipConfig = SkipConfig.effective(book, source, settings);
-
-      // 4. 章节回填缓存与书籍信息
       if (fromNetwork) {
         await bookRepo.saveChapters(book.id, chs);
         final inShelf = await bookRepo.get(book.id);
@@ -180,7 +173,18 @@ class PlayerController extends ChangeNotifier {
       chapters = chs;
       currentIndex = index;
       loading = false;
+      isBuffering = true;
       notifyListeners();
+
+      // 3. 解析播放地址并起播（可能含整章落盘，耗时；会话已就绪）
+      final lazy = source != null && engine.isLazyAudioResolve(source);
+      final urls = lazy
+          ? await _resolveLazySeedUrls(book, chs, source, index: index)
+          : await _resolveAudioUrls(book, chs, source);
+
+      final playHeaders = source != null
+          ? engine.resolvePlayHeaders(source, book: book)
+          : const <String, String>{};
 
       await service.playBook(
         book,
@@ -190,6 +194,7 @@ class PlayerController extends ChangeNotifier {
         startAt: startAt,
         skip: skipConfig,
         speed: speed,
+        playHeaders: playHeaders,
         lazyResolve: lazy
             ? (i) => _resolveOneChapter(book, chs[i], source)
             : null,
@@ -197,9 +202,11 @@ class PlayerController extends ChangeNotifier {
       _onChapterChanged(chs[index].id, index);
     } catch (e) {
       loading = false;
-      loadError = e.toString().replaceFirst('Exception: ', '');
-      // 加载失败时勿留下「有书无章节」空壳会话
+      isBuffering = false;
+      final msg = e.toString().replaceFirst('Exception: ', '');
+      // 章节未就绪：清空会话；已有章节：保留会话，只记播放错误
       if (chapters.isEmpty) {
+        loadError = msg;
         if (previousBook != null && previousChapters.isNotEmpty) {
           currentBook = previousBook;
           chapters = previousChapters;
@@ -207,6 +214,8 @@ class PlayerController extends ChangeNotifier {
         } else {
           currentBook = null;
         }
+      } else {
+        playbackError = msg;
       }
       notifyListeners();
     }
@@ -242,10 +251,23 @@ class PlayerController extends ChangeNotifier {
   /// 跳转到指定章节（当前会话内）
   Future<void> playChapter(int index) async {
     if (index < 0 || index >= chapters.length) return;
+    try {
+      await service.pause();
+    } catch (_) {}
+    isPlaying = false;
     currentIndex = index;
+    playbackError = null;
+    isBuffering = true;
     notifyListeners();
-    await service.skipToIndex(index);
-    await ensureAutoAhead();
+    try {
+      await service.skipToIndex(index);
+      await ensureAutoAhead();
+    } catch (e) {
+      // 切章解析失败时保留会话，避免播放页落到「暂无播放」
+      playbackError = e.toString().replaceFirst('Exception: ', '');
+      isBuffering = false;
+      notifyListeners();
+    }
   }
 
   /// 播放时向后补齐 N 章（仅开新任务；暂停后不再触发）
@@ -308,9 +330,8 @@ class PlayerController extends ChangeNotifier {
   Future<void> togglePlay() async {
     if (currentBook == null) return;
     if (player.audioSource == null) {
-      final book = currentBook!;
-      currentBook = null;
-      await continueBook(book);
+      // 不要先清空 currentBook，否则播放页会闪「暂无播放」
+      await continueBook(currentBook!);
       return;
     }
     if (player.playing) {
@@ -332,8 +353,41 @@ class PlayerController extends ChangeNotifier {
     await _onPlaybackError(Exception('手动重试'));
   }
 
-  Future<void> next() => service.next();
-  Future<void> previous() => service.previous();
+  Future<void> next() async {
+    if (!hasNext) return;
+    try {
+      await service.pause();
+    } catch (_) {}
+    isPlaying = false;
+    currentIndex++;
+    isBuffering = true;
+    playbackError = null;
+    notifyListeners();
+    try {
+      await service.next();
+    } catch (e) {
+      playbackError = e.toString().replaceFirst('Exception: ', '');
+      notifyListeners();
+    }
+  }
+
+  Future<void> previous() async {
+    if (!hasPrevious) return;
+    try {
+      await service.pause();
+    } catch (_) {}
+    isPlaying = false;
+    currentIndex--;
+    isBuffering = true;
+    playbackError = null;
+    notifyListeners();
+    try {
+      await service.previous();
+    } catch (e) {
+      playbackError = e.toString().replaceFirst('Exception: ', '');
+      notifyListeners();
+    }
+  }
 
   Future<void> seek(Duration position) => service.seek(position);
 
@@ -518,16 +572,19 @@ class PlayerController extends ChangeNotifier {
 final audioPlayerServiceProvider = Provider<AudioPlayerService>(
     (ref) => throw UnimplementedError('需在 main 中 override'));
 
+/// 注意：依赖一律 `ref.read`。
+/// 若 `watch(downloadServiceProvider)`，下载任务每次 notify 都会重建本 Provider，
+/// 导致 `currentBook` 被清空，进播放页/切章时闪「暂无播放」。
 final playerControllerProvider =
     ChangeNotifierProvider<PlayerController>((ref) {
   return PlayerController(
-    service: ref.watch(audioPlayerServiceProvider),
-    bookRepo: ref.watch(bookRepositoryProvider),
-    progressRepo: ref.watch(progressRepositoryProvider),
-    downloadRepo: ref.watch(downloadRepositoryProvider),
-    sourceRepo: ref.watch(sourceRepositoryProvider),
-    engine: ref.watch(sourceEngineProvider),
-    settings: ref.watch(settingsServiceProvider),
-    downloads: ref.watch(downloadServiceProvider),
+    service: ref.read(audioPlayerServiceProvider),
+    bookRepo: ref.read(bookRepositoryProvider),
+    progressRepo: ref.read(progressRepositoryProvider),
+    downloadRepo: ref.read(downloadRepositoryProvider),
+    sourceRepo: ref.read(sourceRepositoryProvider),
+    engine: ref.read(sourceEngineProvider),
+    settings: ref.read(settingsServiceProvider),
+    downloads: ref.read(downloadServiceProvider),
   );
 });

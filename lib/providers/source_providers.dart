@@ -34,9 +34,11 @@ class SourcesController extends ChangeNotifier {
 
   List<BookSource> get enabledSources => sources.where((s) => s.enabled).toList();
 
-  Future<void> load() async {
-    loading = true;
-    notifyListeners();
+  Future<void> load({bool quiet = false}) async {
+    if (!quiet) {
+      loading = true;
+      notifyListeners();
+    }
     try {
       sources = await repository.list();
     } finally {
@@ -45,8 +47,12 @@ class SourcesController extends ChangeNotifier {
     }
   }
 
-  /// 从文本导入书源（支持单个 JSON 对象或 JSON 数组），按 url 去重更新
-  Future<SourceImportResult> importFromText(String text) async {
+  /// 从文本导入书源（支持单个 JSON 对象或 JSON 数组），按 url 去重更新。
+  /// [remoteUrl] 非空表示来自网络导入，会记入书源以便后续「更新」。
+  Future<SourceImportResult> importFromText(
+    String text, {
+    String? remoteUrl,
+  }) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) {
       return const SourceImportResult(okCount: 0, errors: ['内容为空']);
@@ -60,6 +66,8 @@ class SourcesController extends ChangeNotifier {
     final list = decoded is List ? decoded : [decoded];
     final errors = <String>[];
     var ok = 0;
+    final feed = remoteUrl?.trim();
+    final feedUrl = (feed != null && feed.isNotEmpty) ? feed : null;
     for (var i = 0; i < list.length; i++) {
       final item = list[i];
       if (item is! Map) {
@@ -73,17 +81,23 @@ class SourcesController extends ChangeNotifier {
         errors.add('「$name」校验失败: ${validateErrors.join('；')}');
         continue;
       }
-      var source = BookSource.fromRuleJson(map);
+      var source = BookSource.fromRuleJson(map, remoteUrl: feedUrl);
       // 按 url 去重：已存在同 url 书源则更新规则
       final existed = await repository.getByUrl(source.url);
       if (existed != null) {
         source = source.copyWith(
-            id: existed.id, enabled: existed.enabled, importedAt: existed.importedAt);
+          id: existed.id,
+          enabled: existed.enabled,
+          importedAt: existed.importedAt,
+          // 本次网络导入覆盖；本地导入保留原有 remoteUrl
+          remoteUrl: feedUrl ?? existed.remoteUrl,
+        );
       }
       await repository.upsert(source);
       ok++;
     }
-    if (ok > 0) await load();
+    // quiet：导入弹窗还在时不要先把列表切成 loading，少一次叠路由刷新
+    if (ok > 0) await load(quiet: true);
     return SourceImportResult(okCount: ok, errors: errors);
   }
 
@@ -105,34 +119,8 @@ class SourcesController extends ChangeNotifier {
     }
 
     try {
-      final dio = Dio(BaseOptions(
-        connectTimeout: const Duration(seconds: 15),
-        receiveTimeout: const Duration(seconds: 30),
-        followRedirects: true,
-        maxRedirects: 5,
-        responseType: ResponseType.bytes,
-        validateStatus: (code) => code != null && code < 400,
-        headers: const {
-          'User-Agent':
-              'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 '
-              '(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-          'Accept': 'application/json, text/plain, */*',
-          'Accept-Language': 'zh-CN,zh;q=0.9',
-        },
-      ));
-      final resp = await dio.getUri(uri);
-      final data = resp.data;
-      if (data is! List<int> || data.isEmpty) {
-        return const SourceImportResult(okCount: 0, errors: ['下载内容为空']);
-      }
-      final text = decodeTextFileBytes(data);
-      if (text.trim().isEmpty) {
-        return const SourceImportResult(
-          okCount: 0,
-          errors: ['下载内容无法解码为文本'],
-        );
-      }
-      return importFromText(text);
+      final text = await _downloadSourceText(uri);
+      return importFromText(text, remoteUrl: url);
     } on DioException catch (e) {
       final code = e.response?.statusCode;
       final detail = e.message ?? e.type.name;
@@ -145,6 +133,46 @@ class SourcesController extends ChangeNotifier {
     } catch (e) {
       return SourceImportResult(okCount: 0, errors: ['下载失败: $e']);
     }
+  }
+
+  /// 按书源记录的 [BookSource.remoteUrl] 重新拉取并覆盖规则。
+  Future<SourceImportResult> updateFromRemote(BookSource source) async {
+    final feed = source.remoteUrl?.trim() ?? '';
+    if (feed.isEmpty) {
+      return const SourceImportResult(
+        okCount: 0,
+        errors: ['本地书源不支持在线更新，请手动编辑或重新导入'],
+      );
+    }
+    return importFromUrl(feed);
+  }
+
+  Future<String> _downloadSourceText(Uri uri) async {
+    final dio = Dio(BaseOptions(
+      connectTimeout: const Duration(seconds: 15),
+      receiveTimeout: const Duration(seconds: 30),
+      followRedirects: true,
+      maxRedirects: 5,
+      responseType: ResponseType.bytes,
+      validateStatus: (code) => code != null && code < 400,
+      headers: const {
+        'User-Agent':
+            'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 '
+            '(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'zh-CN,zh;q=0.9',
+      },
+    ));
+    final resp = await dio.getUri(uri);
+    final data = resp.data;
+    if (data is! List<int> || data.isEmpty) {
+      throw Exception('下载内容为空');
+    }
+    final text = decodeTextFileBytes(data);
+    if (text.trim().isEmpty) {
+      throw Exception('下载内容无法解码为文本');
+    }
+    return text;
   }
 
   Future<void> toggle(BookSource source) async {
@@ -164,9 +192,16 @@ class SourcesController extends ChangeNotifier {
     final map = Map<String, dynamic>.from(decoded);
     final errors = engine.validate(map);
     if (errors.isNotEmpty) return errors;
-    final updated = BookSource.fromRuleJson(map, id: source.id);
+    final updated = BookSource.fromRuleJson(
+      map,
+      id: source.id,
+      remoteUrl: source.remoteUrl,
+    );
     await repository.upsert(updated.copyWith(
-        enabled: source.enabled, importedAt: source.importedAt));
+      enabled: source.enabled,
+      importedAt: source.importedAt,
+      remoteUrl: source.remoteUrl,
+    ));
     await load();
     return const [];
   }
