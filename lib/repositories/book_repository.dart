@@ -57,9 +57,12 @@ class BookRepository {
   Future<void> delete(String id) async {
     final db = await _db;
     await db.delete('books', where: 'id = ?', whereArgs: [id]);
-    await db.delete('chapters', where: 'book_id = ?', whereArgs: [id]);
     await db.delete('play_progress', where: 'book_id = ?', whereArgs: [id]);
+    // 保留 chapters 缓存：移出书架后仍可从详情/搜索再播，不必重新抓目录
   }
+
+  /// 移出书架（与 [delete] 相同；语义名供调用方区分）
+  Future<void> removeFromShelf(String id) => delete(id);
 
   Future<void> saveChapters(String bookId, List<Chapter> chapters) async {
     final db = await _db;

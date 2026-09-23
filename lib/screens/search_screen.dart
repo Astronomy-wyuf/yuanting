@@ -2,9 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../models/book_source.dart';
 import '../models/search_record.dart';
-import '../providers/app_providers.dart';
 import '../providers/player_providers.dart';
 import '../providers/search_providers.dart';
 import '../providers/source_providers.dart';
@@ -143,21 +141,17 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     if (_opening) return;
     _opening = true;
     try {
-      final sources = ref.read(sourcesControllerProvider).sources;
-      BookSource? source;
-      for (final s in sources) {
-        if (s.id == record.sourceId) source = s;
-      }
-      if (source == null) {
+      final exists = ref
+          .read(sourcesControllerProvider)
+          .sources
+          .any((s) => s.id == record.sourceId);
+      if (!exists) {
         _toast('书源不存在或已删除');
         return;
       }
-      final engine = ref.read(sourceEngineProvider);
-      final book = await engine.getDetail(source, record);
       if (!mounted) return;
-      context.push('/book-detail', extra: book);
-    } catch (e) {
-      _toast('打开详情失败: $e');
+      // 先跳转，详情页后台补全 meta / 章节，避免等 getDetail
+      context.push('/book-detail', extra: record.toBook());
     } finally {
       _opening = false;
     }

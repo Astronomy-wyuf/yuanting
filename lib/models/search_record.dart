@@ -1,3 +1,5 @@
+import 'book.dart';
+
 /// 搜索结果条目
 class SearchRecord {
   final String sourceId;
@@ -31,6 +33,26 @@ class SearchRecord {
     this.category,
     this.chapterCount,
   });
+
+  /// 用列表字段拼瞬时 Book，详情页再后台补全简介等。
+  Book toBook() {
+    final now = DateTime.now();
+    final total = int.tryParse(
+      (chapterCount ?? '').replaceAll(RegExp(r'[^0-9]'), ''),
+    );
+    return Book(
+      id: Book.buildId(sourceId, sourceBookId),
+      sourceId: sourceId,
+      sourceBookId: sourceBookId,
+      title: title,
+      author: author,
+      coverUrl: coverUrl,
+      detailUrl: detailUrl,
+      addedAt: now,
+      updatedAt: now,
+      totalChapters: total != null && total > 0 ? total : null,
+    );
+  }
 
   /// 副标题：作者 · 播音（缺省自动省略；分类另字段展示）
   String get subtitleLine {

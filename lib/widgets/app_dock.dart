@@ -1,12 +1,10 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/download_providers.dart';
 import '../theme/app_theme.dart';
 
-/// 底部 Tab — 磨砂半透明，对齐原型
+/// 底部 Tab — 实色底栏（避免 BackdropFilter 滚动掉帧）
 class AppDock extends ConsumerWidget {
   final int index;
   final ValueChanged<int> onChanged;
@@ -33,42 +31,37 @@ class AppDock extends ConsumerWidget {
       downloadServiceProvider.select((s) => s.activeCount),
     );
 
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-        child: Container(
-          decoration: BoxDecoration(
-            color: scheme.surfaceContainerLowest.withValues(alpha: 0.92),
-            border: Border(
-              top: BorderSide(color: scheme.outlineVariant),
-            ),
-          ),
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.paddingOf(context).bottom > 0
-                ? MediaQuery.paddingOf(context).bottom
-                : 6,
-            top: 4,
-          ),
-          child: SizedBox(
-            height: 52,
-            child: Row(
-              children: [
-                for (var i = 0; i < _items.length; i++)
-                  Expanded(
-                    child: _DockItem(
-                      icon: index == i ? _items[i].$2 : _items[i].$1,
-                      label: _items[i].$3,
-                      selected: index == i,
-                      badge: i == 3 && activeDl > 0
-                          ? (activeDl > 99 ? '99+' : '$activeDl')
-                          : null,
-                      badgeColor: brand.accent,
-                      onTap: () => onChanged(i),
-                    ),
-                  ),
-              ],
-            ),
-          ),
+    return Container(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLowest,
+        border: Border(
+          top: BorderSide(color: scheme.outlineVariant),
+        ),
+      ),
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.paddingOf(context).bottom > 0
+            ? MediaQuery.paddingOf(context).bottom
+            : 6,
+        top: 4,
+      ),
+      child: SizedBox(
+        height: 52,
+        child: Row(
+          children: [
+            for (var i = 0; i < _items.length; i++)
+              Expanded(
+                child: _DockItem(
+                  icon: index == i ? _items[i].$2 : _items[i].$1,
+                  label: _items[i].$3,
+                  selected: index == i,
+                  badge: i == 3 && activeDl > 0
+                      ? (activeDl > 99 ? '99+' : '$activeDl')
+                      : null,
+                  badgeColor: brand.accent,
+                  onTap: () => onChanged(i),
+                ),
+              ),
+          ],
         ),
       ),
     );

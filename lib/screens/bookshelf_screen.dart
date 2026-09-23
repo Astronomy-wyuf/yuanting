@@ -58,7 +58,10 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('移出书架'),
-        content: Text('将《${book.title}》移出书架？收听进度将一并删除。'),
+        content: Text(
+          '将《${book.title}》移出书架？\n'
+          '不会停止当前播放；书架进度记录会清除。',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -72,10 +75,7 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
       ),
     );
     if (ok != true || !mounted) return;
-    final player = ref.read(playerControllerProvider);
-    if (player.currentBook?.id == book.id) {
-      await player.clearSession();
-    }
+    // 不 clearSession：移出书架 ≠ 停止收听
     await ref.read(bookshelfControllerProvider).remove(book.id);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(

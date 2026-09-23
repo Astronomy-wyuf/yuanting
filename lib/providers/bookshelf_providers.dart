@@ -69,7 +69,7 @@ class BookshelfController extends ChangeNotifier {
   }
 
   Future<void> remove(String bookId) async {
-    await repository.delete(bookId);
+    await repository.removeFromShelf(bookId);
     await load();
   }
 

@@ -8,6 +8,7 @@ import '../models/book.dart';
 import '../models/book_source.dart';
 import '../models/chapter.dart';
 import '../models/download_task.dart';
+import '../models/search_record.dart';
 import '../providers/app_providers.dart';
 import '../providers/bookshelf_providers.dart';
 import '../providers/download_providers.dart';
@@ -49,7 +50,49 @@ class _BookDetailScreenState extends ConsumerState<BookDetailScreen> {
 
   Future<void> _init() async {
     await _checkShelf();
+    // 列表进详情时 meta 可能不全；与章节并行补全，不挡目录
+    unawaited(_enrichDetailMeta());
     await _loadChapters();
+  }
+
+  /// 后台拉取详情简介等；失败静默保留列表字段。
+  Future<void> _enrichDetailMeta() async {
+    try {
+      final source = await ref.read(sourceRepositoryProvider).get(_book.sourceId);
+      if (source == null) return;
+      final detail = source.rule['detail'];
+      final url = detail is Map ? (detail['url'] as String?)?.trim() : null;
+      if (url == null || url.isEmpty) return;
+
+      final record = SearchRecord(
+        sourceId: _book.sourceId,
+        sourceName: source.name,
+        sourceBookId: _book.sourceBookId,
+        title: _book.title,
+        author: _book.author,
+        coverUrl: _book.coverUrl,
+        detailUrl: _book.detailUrl,
+      );
+      final detailed =
+          await ref.read(sourceEngineProvider).getDetail(source, record);
+      if (!mounted) return;
+      setState(() {
+        _book = _book.copyWith(
+          title: detailed.title,
+          author: detailed.author ?? _book.author,
+          coverUrl: detailed.coverUrl ?? _book.coverUrl,
+          description: detailed.description ?? _book.description,
+          detailUrl: detailed.detailUrl.isNotEmpty
+              ? detailed.detailUrl
+              : _book.detailUrl,
+        );
+      });
+      if (_inShelf) {
+        unawaited(
+          ref.read(bookshelfControllerProvider).addOrUpdate(_book),
+        );
+      }
+    } catch (_) {}
   }
 
   Future<void> _checkShelf() async {
@@ -118,7 +161,10 @@ class _BookDetailScreenState extends ConsumerState<BookDetailScreen> {
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('移出书架'),
-          content: Text('将《${_book.title}》移出书架？收听进度将一并删除。'),
+          content: Text(
+            '将《${_book.title}》移出书架？\n'
+            '不会停止播放；书架进度记录会清除，章节缓存仍保留便于再播。',
+          ),
           actions: [
             TextButton(
                 onPressed: () => Navigator.pop(context, false),
@@ -146,12 +192,7 @@ class _BookDetailScreenState extends ConsumerState<BookDetailScreen> {
           .showSnackBar(SnackBar(content: Text(err)));
       return;
     }
-    if (!_inShelf) {
-      await ref
-          .read(bookshelfControllerProvider)
-          .addOrUpdate(player.currentBook!);
-      if (mounted) setState(() => _inShelf = true);
-    }
+    // 播放不自动加书架；收藏由用户显式点「书架」
   }
 
   Future<void> _ensurePlayerRoute() async {
@@ -161,13 +202,10 @@ class _BookDetailScreenState extends ConsumerState<BookDetailScreen> {
     await context.push('/player');
   }
 
-  /// 等到章节会话就绪（不必等整章音频落盘），以便尽快进播放页。
+  /// 会话已认领（currentBook 已设）即可进播放页；章节/音频在播放页缓冲。
   Future<void> _waitSessionReady(PlayerController player, String bookId) async {
     bool ready() =>
-        player.loadError != null ||
-        (!player.loading &&
-            player.chapters.isNotEmpty &&
-            player.currentBook?.id == bookId);
+        player.loadError != null || player.currentBook?.id == bookId;
     if (ready()) return;
 
     final done = Completer<void>();
@@ -178,13 +216,13 @@ class _BookDetailScreenState extends ConsumerState<BookDetailScreen> {
     player.addListener(listener);
     try {
       listener();
-      await done.future.timeout(const Duration(seconds: 45));
+      await done.future.timeout(const Duration(seconds: 8));
     } finally {
       player.removeListener(listener);
     }
   }
 
-  /// 章节目录就绪后即进播放页；音频解析/落盘在播放页缓冲，避免详情卡「播放中」。
+  /// 点播放即进播放页；章节目录优先用本页已加载列表，音频在播放页缓冲。
   Future<void> _play({int startIndex = 0}) async {
     if (_starting) return;
     setState(() => _starting = true);
@@ -193,7 +231,12 @@ class _BookDetailScreenState extends ConsumerState<BookDetailScreen> {
       final book = _inShelf
           ? _book
           : _book.copyWith(addedAt: DateTime.now(), updatedAt: DateTime.now());
-      final playFuture = player.playBook(book, startIndex: startIndex);
+      final known = _chapters.isNotEmpty ? _chapters : null;
+      final playFuture = player.playBook(
+        book,
+        startIndex: startIndex,
+        knownChapters: known,
+      );
       try {
         await _waitSessionReady(player, book.id);
       } on TimeoutException {
@@ -204,9 +247,7 @@ class _BookDetailScreenState extends ConsumerState<BookDetailScreen> {
         return;
       }
       if (!mounted) return;
-      if (player.loadError != null ||
-          player.currentBook == null ||
-          player.chapters.isEmpty) {
+      if (player.loadError != null || player.currentBook == null) {
         await _afterStartPlay(player);
         await playFuture;
         return;
@@ -241,7 +282,9 @@ class _BookDetailScreenState extends ConsumerState<BookDetailScreen> {
         });
       }
       final target = fresh ?? _book;
-      final playFuture = player.continueBook(target);
+      final known = _chapters.isNotEmpty ? _chapters : null;
+      final playFuture =
+          player.continueBook(target, knownChapters: known);
       try {
         await _waitSessionReady(player, target.id);
       } on TimeoutException {
@@ -252,9 +295,7 @@ class _BookDetailScreenState extends ConsumerState<BookDetailScreen> {
         return;
       }
       if (!mounted) return;
-      if (player.loadError != null ||
-          player.currentBook == null ||
-          player.chapters.isEmpty) {
+      if (player.loadError != null || player.currentBook == null) {
         await _afterStartPlay(player);
         await playFuture;
         return;

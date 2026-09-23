@@ -12,6 +12,12 @@ class BookCover extends StatelessWidget {
   final IconData placeholderIcon;
   final bool softShadow;
 
+  /// 迷你条 ↔ 全屏播放页共享转场
+  final Object? heroTag;
+
+  /// 网络图淡入；播放页/迷你条用 0 避免重建闪白
+  final Duration fadeIn;
+
   const BookCover({
     super.key,
     this.url,
@@ -20,7 +26,11 @@ class BookCover extends StatelessWidget {
     this.radius = 0,
     this.placeholderIcon = Icons.menu_book_outlined,
     this.softShadow = false,
+    this.heroTag,
+    this.fadeIn = const Duration(milliseconds: 180),
   });
+
+  static Object playerHeroTag(String bookId) => 'player-cover-$bookId';
 
   @override
   Widget build(BuildContext context) {
@@ -67,25 +77,39 @@ class BookCover extends StatelessWidget {
             'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
             if (_imageReferer(imageUrl) case final ref?) 'Referer': ref,
           },
-          fadeInDuration: const Duration(milliseconds: 180),
+          fadeInDuration: fadeIn,
+          fadeOutDuration: Duration.zero,
           placeholder: (_, __) => placeholder,
           errorWidget: (_, __, ___) => placeholder,
         ),
       );
     }
 
-    if (!softShadow) return child;
-    return Container(
-      decoration: BoxDecoration(
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.ink.withValues(alpha: 0.18),
-            blurRadius: 24,
-            offset: const Offset(0, 12),
-          ),
-        ],
+    if (softShadow) {
+      child = Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(radius),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.ink.withValues(alpha: 0.18),
+              blurRadius: 24,
+              offset: const Offset(0, 12),
+            ),
+          ],
+        ),
+        child: child,
+      );
+    }
+
+    if (heroTag == null) return child;
+    return Hero(
+      tag: heroTag!,
+      createRectTween: (begin, end) =>
+          MaterialRectArcTween(begin: begin, end: end),
+      child: Material(
+        type: MaterialType.transparency,
+        child: child,
       ),
-      child: child,
     );
   }
 

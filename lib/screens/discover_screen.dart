@@ -32,6 +32,7 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
   bool _opening = false;
   int _hotPoolIndex = 0;
   int _hotPage = 1;
+  int _reloadGen = 0;
   DiscoverSourceConfig _config = const DiscoverSourceConfig();
 
   void _openCategory(String name) {
@@ -71,80 +72,86 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
       return;
     }
 
+    final gen = ++_reloadGen;
     setState(() {
       _config = config;
       _loading = true;
       _error = null;
       _hotPoolIndex = 0;
       _hotPage = 1;
-      _hot = [];
-      _rank = [];
-      _news = [];
+      // 保留旧数据直到新区块返回，避免整页闪空
     });
 
     final engine = ref.read(sourceEngineProvider);
-    try {
-      Future<List<SearchRecord>> safeSearch(String q) async {
-        try {
-          return await engine.search(source, q, page: 1);
-        } catch (_) {
-          return const [];
-        }
-      }
 
-      final futures = <Future<List<SearchRecord>>>[];
-      final kinds = <String>[];
-      if (config.hasHot) {
-        futures.add(safeSearch(config.hotQueries.first));
-        kinds.add('hot');
+    Future<List<SearchRecord>> safeSearch(String q) async {
+      try {
+        return await engine.search(source, q, page: 1);
+      } catch (_) {
+        return const [];
       }
-      if (config.hasRank) {
-        futures.add(safeSearch(config.rankQuery!));
-        kinds.add('rank');
-      }
-      if (config.hasNews) {
-        futures.add(safeSearch(config.newsQuery!));
-        kinds.add('news');
-      }
+    }
 
-      final results = futures.isEmpty
-          ? <List<SearchRecord>>[]
-          : await Future.wait(futures);
-
-      List<SearchRecord> hot = [];
-      List<SearchRecord> rank = [];
-      List<SearchRecord> news = [];
-      for (var i = 0; i < kinds.length; i++) {
-        final list = results[i];
-        switch (kinds[i]) {
-          case 'hot':
-            hot = list.take(8).toList();
-          case 'rank':
-            rank = list.take(6).toList();
-          case 'news':
-            news = list.take(6).toList();
-        }
-      }
-
-      if (!mounted) return;
+    var pending = 0;
+    void finishOne() {
+      pending--;
+      if (pending > 0 || !mounted || gen != _reloadGen) return;
       setState(() {
-        _hot = hot;
-        _rank = rank;
-        _news = news;
         _loading = false;
         final noModules = !config.hasCategories &&
-            hot.isEmpty &&
-            rank.isEmpty &&
-            news.isEmpty;
+            _hot.isEmpty &&
+            _rank.isEmpty &&
+            _news.isEmpty;
         if (noModules) {
           _error = '当前书源暂无发现内容，可去搜书';
         }
       });
-    } catch (e) {
-      if (!mounted) return;
+    }
+
+    void applySection(String kind, List<SearchRecord> list) {
+      if (!mounted || gen != _reloadGen) return;
+      setState(() {
+        switch (kind) {
+          case 'hot':
+            _hot = list.take(8).toList();
+          case 'rank':
+            _rank = list.take(6).toList();
+          case 'news':
+            _news = list.take(6).toList();
+        }
+        // 首个区块到达即结束全页转圈，后续区块继续填入
+        if (_loading) _loading = false;
+      });
+    }
+
+    if (config.hasHot) {
+      pending++;
+      safeSearch(config.hotQueries.first).then((list) {
+        applySection('hot', list);
+        finishOne();
+      });
+    }
+    if (config.hasRank) {
+      pending++;
+      safeSearch(config.rankQuery!).then((list) {
+        applySection('rank', list);
+        finishOne();
+      });
+    }
+    if (config.hasNews) {
+      pending++;
+      safeSearch(config.newsQuery!).then((list) {
+        applySection('news', list);
+        finishOne();
+      });
+    }
+
+    if (pending == 0 && mounted && gen == _reloadGen) {
       setState(() {
         _loading = false;
-        _error = e.toString().replaceFirst('Exception: ', '');
+        if (!config.hasCategories) {
+          _error = '当前书源暂无发现内容，可去搜书';
+        }
       });
     }
   }
@@ -189,27 +196,18 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
     if (_opening) return;
     _opening = true;
     try {
-      final sources = ref.read(sourcesControllerProvider).sources;
-      BookSource? source;
-      for (final s in sources) {
-        if (s.id == record.sourceId) source = s;
-      }
-      if (source == null) {
+      final exists = ref
+          .read(sourcesControllerProvider)
+          .sources
+          .any((s) => s.id == record.sourceId);
+      if (!exists) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('书源不存在或已删除')),
         );
         return;
       }
-      final book =
-          await ref.read(sourceEngineProvider).getDetail(source, record);
       if (!mounted) return;
-      context.push('/book-detail', extra: book);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('打开详情失败: $e')),
-        );
-      }
+      context.push('/book-detail', extra: record.toBook());
     } finally {
       _opening = false;
     }

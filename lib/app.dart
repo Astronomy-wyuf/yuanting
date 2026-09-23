@@ -88,21 +88,21 @@ class _AudiobookAppState extends ConsumerState<AudiobookApp> {
           parentNavigatorKey: _rootNavigatorKey,
           pageBuilder: (context, state) => CustomTransitionPage(
             key: state.pageKey,
+            opaque: false,
+            barrierColor: Colors.black38,
             child: const PlayerScreen(),
             transitionsBuilder: (context, animation, secondary, child) {
               final curved = CurvedAnimation(
                 parent: animation,
                 curve: Curves.easeOutCubic,
+                reverseCurve: Curves.easeInCubic,
               );
-              return FadeTransition(
-                opacity: curved,
-                child: SlideTransition(
-                  position: Tween<Offset>(
-                    begin: const Offset(0, 0.06),
-                    end: Offset.zero,
-                  ).animate(curved),
-                  child: child,
-                ),
+              return SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0, 1),
+                  end: Offset.zero,
+                ).animate(curved),
+                child: child,
               );
             },
           ),

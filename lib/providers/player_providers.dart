@@ -119,8 +119,12 @@ class PlayerController extends ChangeNotifier {
   bool get hasPrevious => currentIndex > 0;
 
   /// 播放指定书籍
+  ///
+  /// [knownChapters] 非空时跳过目录抓取（详情页已加载时用），更快进播放页。
   Future<void> playBook(Book book,
-      {int startIndex = 0, Duration? startAt}) async {
+      {int startIndex = 0,
+      Duration? startAt,
+      List<Chapter>? knownChapters}) async {
     final previousBook = currentBook;
     final previousChapters = List<Chapter>.from(chapters);
     final previousIndex = currentIndex;
@@ -130,12 +134,21 @@ class PlayerController extends ChangeNotifier {
     playbackError = null;
     _playbackRetryCount = 0;
     currentBook = book;
-    chapters = [];
+    chapters = (knownChapters != null && knownChapters.isNotEmpty)
+        ? List<Chapter>.from(knownChapters)
+        : <Chapter>[];
     currentIndex = startIndex;
+    // 详情页已有目录时立刻结束 loading，播放页可马上显示控件（音频仍缓冲）
+    if (chapters.isNotEmpty) {
+      loading = false;
+      isBuffering = true;
+    }
     notifyListeners();
     try {
-      // 1. 章节列表：DB 缓存优先，无缓存则经书源抓取
-      var chs = await bookRepo.getChapters(book.id);
+      // 1. 章节列表：已知列表 > DB 缓存 > 书源抓取
+      var chs = chapters.isNotEmpty
+          ? chapters
+          : await bookRepo.getChapters(book.id);
       var fromNetwork = false;
       var source = await sourceRepo.get(book.sourceId);
       if (chs.isEmpty) {
@@ -222,14 +235,17 @@ class PlayerController extends ChangeNotifier {
   }
 
   /// 继续收听：根据上次的章节与进度断点续播；本章已听完则自动跳下一集
-  Future<void> continueBook(Book book) async {
+  Future<void> continueBook(Book book,
+      {List<Chapter>? knownChapters}) async {
     // 以 DB 中最新进度为准，避免详情页持有过期 Book
     final fresh = await bookRepo.get(book.id);
     final b = fresh ?? book;
     var startIndex = 0;
     Duration? startAt;
     if (b.lastPlayChapterId != null) {
-      final chs = await bookRepo.getChapters(b.id);
+      final chs = (knownChapters != null && knownChapters.isNotEmpty)
+          ? knownChapters
+          : await bookRepo.getChapters(b.id);
       final idx = chs.indexWhere((c) => c.id == b.lastPlayChapterId);
       if (idx >= 0) {
         final prog = await progressRepo.get(b.lastPlayChapterId!);
@@ -245,7 +261,12 @@ class PlayerController extends ChangeNotifier {
         }
       }
     }
-    await playBook(b, startIndex: startIndex, startAt: startAt);
+    await playBook(
+      b,
+      startIndex: startIndex,
+      startAt: startAt,
+      knownChapters: knownChapters,
+    );
   }
 
   /// 跳转到指定章节（当前会话内）

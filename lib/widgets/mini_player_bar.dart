@@ -15,25 +15,50 @@ class MiniPlayerBar extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final player = ref.watch(playerControllerProvider);
-    if (!player.hasSession) return const SizedBox.shrink();
+    final hasSession = ref.watch(
+      playerControllerProvider.select((p) => p.hasSession),
+    );
+    if (!hasSession) return const SizedBox.shrink();
+
+    final coverUrl = ref.watch(
+      playerControllerProvider.select((p) => p.currentBook?.coverUrl),
+    );
+    final title = ref.watch(
+      playerControllerProvider.select((p) => p.currentBook?.title),
+    )!;
+    final chapterTitle = ref.watch(
+      playerControllerProvider.select((p) => p.currentChapter?.title),
+    );
+    final sourceId = ref.watch(
+      playerControllerProvider.select((p) => p.currentBook!.sourceId),
+    );
+    final isPlaying = ref.watch(
+      playerControllerProvider.select((p) => p.isPlaying),
+    );
+    final playbackError = ref.watch(
+      playerControllerProvider.select((p) => p.playbackError),
+    );
+    final speed = ref.watch(
+      playerControllerProvider.select((p) => p.speed),
+    );
+    final progress = ref.watch(
+      playerControllerProvider.select((p) {
+        final d = p.duration.inMilliseconds;
+        if (d <= 0) return 0.0;
+        return (p.position.inMilliseconds / d).clamp(0.0, 1.0);
+      }),
+    );
 
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final brand = BrandColors.of(context);
-    final book = player.currentBook!;
-    final chapter = player.currentChapter;
-    final progress = player.duration.inMilliseconds > 0
-        ? (player.position.inMilliseconds / player.duration.inMilliseconds)
-            .clamp(0.0, 1.0)
-        : 0.0;
     final speedLabel =
-        '${player.speed.toStringAsFixed(player.speed == player.speed.roundToDouble() ? 0 : 1)}x';
+        '${speed.toStringAsFixed(speed == speed.roundToDouble() ? 0 : 1)}x';
 
     final sources = ref.watch(sourcesControllerProvider).sources;
     String sourceName = '播放中';
     for (final s in sources) {
-      if (s.id == book.sourceId) {
+      if (s.id == sourceId) {
         sourceName = s.name;
         break;
       }
@@ -54,7 +79,6 @@ class MiniPlayerBar extends ConsumerWidget {
             height: 56,
             child: Stack(
               children: [
-                // 进度条贴顶，左右内缩避开圆角，避免「比圆角还长」
                 Positioned(
                   left: _radius * 0.55,
                   right: _radius * 0.55,
@@ -64,7 +88,8 @@ class MiniPlayerBar extends ConsumerWidget {
                     child: LinearProgressIndicator(
                       value: progress,
                       minHeight: 2,
-                      backgroundColor: scheme.outlineVariant.withValues(alpha: 0.45),
+                      backgroundColor:
+                          scheme.outlineVariant.withValues(alpha: 0.45),
                       color: brand.accent,
                     ),
                   ),
@@ -72,14 +97,13 @@ class MiniPlayerBar extends ConsumerWidget {
                 Row(
                   children: [
                     const SizedBox(width: 8),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(6),
-                      child: BookCover(
-                        url: book.coverUrl,
-                        width: 40,
-                        height: 40,
-                        radius: 6,
-                      ),
+                    // 不用 Hero：全屏播放页打开时迷你条仍在树内，双 Hero 同 tag 会闪
+                    BookCover(
+                      url: coverUrl,
+                      width: 40,
+                      height: 40,
+                      radius: 6,
+                      fadeIn: Duration.zero,
                     ),
                     Expanded(
                       child: Padding(
@@ -89,9 +113,9 @@ class MiniPlayerBar extends ConsumerWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              chapter != null
-                                  ? '${chapter.title} · ${book.title}'
-                                  : book.title,
+                              chapterTitle != null
+                                  ? '$chapterTitle · $title'
+                                  : title,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: theme.textTheme.bodyMedium?.copyWith(
@@ -99,13 +123,11 @@ class MiniPlayerBar extends ConsumerWidget {
                               ),
                             ),
                             Text(
-                              player.playbackError != null
-                                  ? player.playbackError!
-                                  : '$speedLabel · $sourceName',
+                              playbackError ?? '$speedLabel · $sourceName',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: theme.textTheme.bodySmall?.copyWith(
-                                color: player.playbackError != null
+                                color: playbackError != null
                                     ? scheme.error
                                     : null,
                               ),
@@ -116,12 +138,13 @@ class MiniPlayerBar extends ConsumerWidget {
                     ),
                     IconButton(
                       icon: Icon(
-                        player.isPlaying ? Icons.pause : Icons.play_arrow,
+                        isPlaying ? Icons.pause : Icons.play_arrow,
                         size: 24,
                         color: brand.accent,
                       ),
-                      tooltip: player.playbackError != null ? '重试播放' : null,
-                      onPressed: player.togglePlay,
+                      tooltip: playbackError != null ? '重试播放' : null,
+                      onPressed: () =>
+                          ref.read(playerControllerProvider).togglePlay(),
                     ),
                     IconButton(
                       icon: Icon(
@@ -129,7 +152,8 @@ class MiniPlayerBar extends ConsumerWidget {
                         size: 20,
                         color: scheme.onSurfaceVariant,
                       ),
-                      onPressed: () => player.clearSession(),
+                      onPressed: () =>
+                          ref.read(playerControllerProvider).clearSession(),
                     ),
                     const SizedBox(width: 2),
                   ],

@@ -190,27 +190,18 @@ class _CategoryListScreenState extends ConsumerState<CategoryListScreen> {
     if (_opening) return;
     _opening = true;
     try {
-      final sources = ref.read(sourcesControllerProvider).sources;
-      BookSource? source;
-      for (final s in sources) {
-        if (s.id == record.sourceId) source = s;
-      }
-      if (source == null) {
+      final exists = ref
+          .read(sourcesControllerProvider)
+          .sources
+          .any((s) => s.id == record.sourceId);
+      if (!exists) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('书源不存在或已删除')),
         );
         return;
       }
-      final book =
-          await ref.read(sourceEngineProvider).getDetail(source, record);
       if (!mounted) return;
-      context.push('/book-detail', extra: book);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('打开失败: $e')),
-        );
-      }
+      context.push('/book-detail', extra: record.toBook());
     } finally {
       _opening = false;
     }
