@@ -29,7 +29,6 @@ dependencies:
 
   # === 音频播放 ===
   just_audio: ^0.9.38
-  just_audio_background: ^0.0.1-beta.12
   audio_service: ^0.18.13
   audio_session: ^0.1.19
 

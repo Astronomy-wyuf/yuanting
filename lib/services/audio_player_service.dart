@@ -1,9 +1,9 @@
 import 'dart:async';
 
+import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
-import 'package:just_audio_background/just_audio_background.dart';
 
 import '../models/book.dart';
 import '../models/chapter.dart';
@@ -59,12 +59,15 @@ class SleepTimerState {
 }
 
 /// 播放服务：封装 just_audio 播放器。
-/// - 后台播放 / 通知栏 / 锁屏控制：just_audio_background（MediaItem 标签自动生成）
+/// - 后台播放 / 通知栏 / 锁屏控制：audio_service（由 Handler 订阅本服务）
 /// - 倍速 0.5~4.0x
 /// - 睡眠定时：倒计时 / 播完本集 / 播完 N 集
 /// - 片头自动 seek、片尾接近时自动切下一集
 class AudioPlayerService {
   final AudioPlayer player = AudioPlayer();
+
+  /// 通知栏元数据推送（由 [AudiobookAudioHandler] 注入）
+  void Function(MediaItem item)? publishNowPlaying;
 
   Book? _book;
   List<Chapter> _chapters = [];
@@ -244,31 +247,44 @@ class AudioPlayerService {
     if (seekTo > Duration.zero) {
       await player.seek(seekTo);
     }
+    _syncNowPlaying();
     await player.play();
   }
 
   AudioSource _sourceFor(Chapter ch, String audioUrl, Book book) {
     final isFile = _isLocalPath(audioUrl);
     final uri = isFile ? Uri.file(audioUrl) : Uri.parse(audioUrl);
-    // 远程封面常需 Referer；通知栏拉封面无自定义头会 403，有 playHeaders 时不挂 artUri
-    final artUri = (!isFile && _playHeaders.isNotEmpty)
-        ? null
-        : (book.coverUrl != null && book.coverUrl!.startsWith('http')
-            ? Uri.tryParse(book.coverUrl!)
-            : null);
     return AudioSource.uri(
       uri,
       // resolveAudio 已跟完跳转；此处带 Referer 直播最终地址（勿再整章落盘，否则切章卡顿）
       headers: isFile || _playHeaders.isEmpty ? null : _playHeaders,
-      tag: MediaItem(
-        id: ch.id,
-        title: ch.title,
-        album: book.title,
-        artist: book.author,
-        artUri: artUri,
-      ),
     );
   }
+
+  Uri? _artUriFor(Book book) {
+    // 远程封面常需 Referer；通知栏拉封面无自定义头会 403，有 playHeaders 时不挂 artUri
+    if (_playHeaders.isNotEmpty) return null;
+    final cover = book.coverUrl;
+    if (cover == null || !cover.startsWith('http')) return null;
+    return Uri.tryParse(cover);
+  }
+
+  /// 把当前章节推到通知栏 / 锁屏
+  void _syncNowPlaying() {
+    final publish = publishNowPlaying;
+    final book = _book;
+    final ch = currentChapter;
+    if (publish == null || book == null || ch == null) return;
+    publish(MediaItem(
+      id: ch.id,
+      title: ch.title,
+      album: book.title,
+      artist: book.author,
+      artUri: _artUriFor(book),
+      duration: player.duration,
+    ));
+  }
+
 
   bool _isLocalPath(String audioUrl) =>
       audioUrl.startsWith('/') ||
@@ -282,6 +298,7 @@ class AudioPlayerService {
       _sourceFor(ch, audioUrl, book),
       preload: true,
     );
+    _syncNowPlaying();
   }
 
   /// 倍速（0.5 ~ 4.0）
@@ -341,6 +358,7 @@ class AudioPlayerService {
     // 先切 UI / 进度章节，再解析起播，避免等网络时页面“不跟手”
     _lastIndex = index;
     onChapterChanged?.call(_chapters[index].id, index);
+    _syncNowPlaying();
     try {
       final url = await resolve(index);
       while (_audioUrls.length <= index) {
@@ -398,6 +416,7 @@ class AudioPlayerService {
       preload: true,
     );
     _lastIndex = index;
+    _syncNowPlaying();
     await player.play();
   }
 
@@ -486,6 +505,7 @@ class AudioPlayerService {
     if (index >= _chapters.length) return;
     final ch = _chapters[index];
     onChapterChanged?.call(ch.id, index);
+    _syncNowPlaying();
 
     // 睡眠定时：播完本集 / 播完 N 集（自然连播触发，手动切集不触发）
     // 「播完本集」：停在本章结束，不进入下一集开播（由 completed / lazy 完成路径处理）

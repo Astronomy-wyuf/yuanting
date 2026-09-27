@@ -1,8 +1,8 @@
 import 'dart:io';
 
+import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:just_audio_background/just_audio_background.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -10,23 +10,35 @@ import 'app.dart';
 import 'providers/app_providers.dart';
 import 'providers/player_providers.dart';
 import 'services/audio_player_service.dart';
+import 'services/audiobook_audio_handler.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 后台播放 / 通知栏 / 锁屏控制初始化（just_audio_background）
-  // androidNotificationOngoing=true 时必须同时 androidStopForegroundOnPause=true，否则断言崩溃白屏
+  // 后台播放 / 通知栏 / 锁屏：自定义 Handler，始终提供上一集 / 下一集
+  AudioPlayerService? audioService;
   try {
-    await JustAudioBackground.init(
-      androidNotificationChannelId: 'app.yuanting.player.channel',
-      androidNotificationChannelName: '源听播放',
-      androidNotificationOngoing: true,
-      androidStopForegroundOnPause: true,
+    await AudioService.init(
+      builder: () {
+        final service = AudioPlayerService();
+        audioService = service;
+        return AudiobookAudioHandler(service);
+      },
+      config: const AudioServiceConfig(
+        androidNotificationChannelId: 'app.yuanting.player.channel',
+        androidNotificationChannelName: '源听播放',
+        androidNotificationOngoing: true,
+        androidStopForegroundOnPause: true,
+        // 听书常用 ±30 秒（通知栏快退 / 快进）
+        rewindInterval: Duration(seconds: 30),
+        fastForwardInterval: Duration(seconds: 30),
+      ),
     );
   } catch (e, st) {
     // 后台音频初始化失败时仍进入 UI，避免整应用白屏
-    debugPrint('JustAudioBackground.init failed: $e\n$st');
+    debugPrint('AudioService.init failed: $e\n$st');
   }
+  audioService ??= AudioPlayerService();
 
   // 全局配置
   final prefs = await SharedPreferences.getInstance();
@@ -43,7 +55,7 @@ Future<void> main() async {
   runApp(ProviderScope(
     overrides: [
       sharedPreferencesProvider.overrideWithValue(prefs),
-      audioPlayerServiceProvider.overrideWithValue(AudioPlayerService()),
+      audioPlayerServiceProvider.overrideWithValue(audioService!),
     ],
     child: const AudiobookApp(),
   ));

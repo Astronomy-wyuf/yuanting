@@ -42,7 +42,7 @@
             </intent-filter>
         </activity>
 
-        <!-- 后台音频播放服务（just_audio_background / audio_service） -->
+        <!-- 后台音频播放服务（audio_service） -->
         <service
             android:name="com.ryanheise.audioservice.AudioService"
             android:foregroundServiceType="mediaPlayback"
