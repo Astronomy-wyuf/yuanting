@@ -71,6 +71,7 @@ class AudiobookSearchController extends ChangeNotifier {
   Map<String, SourceSearchState> bySource = {};
   List<String> history = [];
   int _searchGen = 0;
+  Timer? _coalescedNotify;
 
   AudiobookSearchController({
     required this.engine,
@@ -186,9 +187,9 @@ class AudiobookSearchController extends ChangeNotifier {
       return;
     }
     final gen = _searchGen;
+    // 不在此 notify：滑动中整树重建会卡；加载态由界面本地 _loadingMore 展示
     bySource[sourceId] =
         state.copyWith(status: SourceSearchStatus.loadingMore);
-    notifyListeners();
     await _searchOne(
       state.source,
       query,
@@ -288,7 +289,28 @@ class AudiobookSearchController extends ChangeNotifier {
         );
       }
     }
-    if (gen == _searchGen) notifyListeners();
+    if (gen == _searchGen) {
+      // 首搜多源并行：合并 notify，减少列表连闪；分页追加立刻刷新
+      if (append) {
+        _notifyNow();
+      } else {
+        _scheduleCoalescedNotify();
+      }
+    }
+  }
+
+  void _notifyNow() {
+    _coalescedNotify?.cancel();
+    _coalescedNotify = null;
+    notifyListeners();
+  }
+
+  void _scheduleCoalescedNotify() {
+    if (_coalescedNotify?.isActive ?? false) return;
+    _coalescedNotify = Timer(const Duration(milliseconds: 48), () {
+      _coalescedNotify = null;
+      notifyListeners();
+    });
   }
 
   String _searchUrlTemplateForPaging(
@@ -396,7 +418,13 @@ class AudiobookSearchController extends ChangeNotifier {
   void clear() {
     query = '';
     bySource = {};
-    notifyListeners();
+    _notifyNow();
+  }
+
+  @override
+  void dispose() {
+    _coalescedNotify?.cancel();
+    super.dispose();
   }
 }
 

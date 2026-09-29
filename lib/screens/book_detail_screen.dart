@@ -18,6 +18,7 @@ import '../utils/audio_utils.dart';
 import '../widgets/book_cover.dart';
 import '../widgets/download_range_sheet.dart';
 import '../widgets/proto_widgets.dart';
+import '../widgets/sheet_chrome.dart';
 import '../widgets/skip_config_sheet.dart';
 
 /// 书籍详情 — 对齐原型：顶栏返回 / 封面横排 / 继续收听+收藏+下载 / 章节列表
@@ -418,6 +419,86 @@ class _BookDetailScreenState extends ConsumerState<BookDetailScreen> {
     );
   }
 
+  void _showFullDescription() {
+    final text = _book.description?.trim();
+    if (text == null || text.isEmpty) return;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        return AppSheetScaffold(
+          eyebrow: 'SYNOPSIS',
+          title: '简介',
+          subtitle: _book.title,
+          child: SelectableText(
+            text,
+            style: theme.textTheme.bodyMedium?.copyWith(height: 1.55),
+          ),
+        );
+      },
+    );
+  }
+
+  /// 简介最多 3 行；过长可点开弹窗看全文。
+  Widget _buildDescription(ThemeData theme, ColorScheme scheme) {
+    final text = _book.description?.trim();
+    if (text == null || text.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final style = theme.textTheme.bodySmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+            height: 1.45,
+          );
+          final painter = TextPainter(
+            text: TextSpan(text: text, style: style),
+            maxLines: 3,
+            textDirection: Directionality.of(context),
+          )..layout(maxWidth: constraints.maxWidth);
+          final overflow = painter.didExceedMaxLines;
+
+          final body = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                text,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: style,
+              ),
+              if (overflow) ...[
+                const SizedBox(height: 4),
+                Text(
+                  '查看全文',
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: BrandColors.of(context).accent,
+                  ),
+                ),
+              ],
+            ],
+          );
+
+          if (!overflow) return body;
+          return Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: _showFullDescription,
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: body,
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final downloads = ref.watch(downloadServiceProvider);
@@ -427,6 +508,12 @@ class _BookDetailScreenState extends ConsumerState<BookDetailScreen> {
     final currentChapterId =
         player.currentBook?.id == _book.id ? player.currentChapter?.id : null;
     final sourceLabel = _source?.name ?? _book.sourceId;
+    final metaParts = <String>[
+      _book.author?.trim().isNotEmpty == true ? _book.author!.trim() : '佚名',
+      sourceLabel,
+      if (_book.totalChapters != null && _book.totalChapters! > 0)
+        '共${_book.totalChapters}集',
+    ];
 
     return Scaffold(
       body: SafeArea(
@@ -491,28 +578,19 @@ class _BookDetailScreenState extends ConsumerState<BookDetailScreen> {
                                       ),
                                       const SizedBox(height: 6),
                                       Text(
-                                        '${_book.author ?? '佚名'} · $sourceLabel',
+                                        metaParts.join(' · '),
                                         style: theme.textTheme.bodyMedium
                                             ?.copyWith(
                                           color: scheme.onSurfaceVariant,
                                         ),
                                       ),
-                                      if (_book.description != null &&
-                                          _book.description!.isNotEmpty) ...[
-                                        const SizedBox(height: 8),
-                                        Text(
-                                          _book.description!,
-                                          maxLines: 3,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: theme.textTheme.bodySmall,
-                                        ),
-                                      ],
                                     ],
                                   ),
                                 ),
                               ),
                             ],
                           ),
+                          _buildDescription(theme, scheme),
                           const SizedBox(height: 16),
                           Row(
                             children: [

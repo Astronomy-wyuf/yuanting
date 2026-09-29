@@ -25,9 +25,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   final _controller = TextEditingController();
   final _focusNode = FocusNode();
   final _scroll = ScrollController();
+  final _loadingMore = ValueNotifier(false);
   bool _opening = false;
   bool _focused = false;
-  bool _loadingMore = false;
   /// 多源时当前选中的书源；无效时回落到第一个
   String? _sourceFilter;
 
@@ -54,15 +54,17 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   void dispose() {
     _scroll.removeListener(_onScroll);
     _scroll.dispose();
+    _loadingMore.dispose();
     _focusNode.dispose();
     _controller.dispose();
     super.dispose();
   }
 
   void _onScroll() {
-    if (!_scroll.hasClients) return;
+    if (!_scroll.hasClients || _loadingMore.value) return;
     final pos = _scroll.position;
-    if (pos.pixels < pos.maxScrollExtent - 320) return;
+    // 距底再远一点再触发，减少滑动中反复判定
+    if (pos.pixels < pos.maxScrollExtent - 480) return;
     _tryLoadMore();
   }
 
@@ -100,13 +102,13 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   Future<void> _tryLoadMore() async {
     final search = ref.read(searchControllerProvider);
     final id = _selectedId(search, search.bySource.values.toList());
-    if (_loadingMore || search.query.isEmpty || id == null) return;
+    if (_loadingMore.value || search.query.isEmpty || id == null) return;
     if (!_selectedHasMore(search)) return;
-    _loadingMore = true;
+    _loadingMore.value = true;
     try {
       await search.loadMore(id);
     } finally {
-      _loadingMore = false;
+      if (mounted) _loadingMore.value = false;
     }
   }
 
@@ -502,7 +504,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     SourceSearchState state,
     double bottom,
   ) {
-    final theme = Theme.of(context);
     return ListView.builder(
       controller: _scroll,
       padding: EdgeInsets.fromLTRB(12, 0, 16, bottom),
@@ -510,53 +511,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       itemBuilder: (context, index) {
         if (index == flat.length) return _footer(state, flat);
         final r = flat[index];
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: InkWell(
-            onTap: () => _openDetail(r),
-            borderRadius: BorderRadius.circular(8),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                BookCover(
-                  url: r.coverUrl,
-                  width: 52,
-                  height: 70,
-                  radius: 6,
-                  placeholderIcon: Icons.menu_book_outlined,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        r.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodyMedium
-                            ?.copyWith(fontWeight: FontWeight.w500),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        r.subtitleLine,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodySmall,
-                      ),
-                      if (r.chapterCount != null) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          '${r.chapterCount} 集',
-                          style: theme.textTheme.bodySmall,
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
+        return _SearchResultTile(
+          key: ValueKey('${r.sourceId}::${r.sourceBookId}'),
+          record: r,
+          onTap: () => _openDetail(r),
         );
       },
     );
@@ -565,46 +523,54 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   Widget _footer(SourceSearchState state, List<SearchRecord> flat) {
     final theme = Theme.of(context);
     final mute = theme.colorScheme.onSurfaceVariant;
-    if (state.status == SourceSearchStatus.loadingMore) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 16),
-        child: Center(
-          child: SizedBox(
-            width: 22,
-            height: 22,
-            child: CircularProgressIndicator(strokeWidth: 2),
+    return ValueListenableBuilder<bool>(
+      valueListenable: _loadingMore,
+      builder: (context, loadingMore, _) {
+        if (loadingMore || state.status == SourceSearchStatus.loadingMore) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 16),
+            child: Center(
+              child: SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          );
+        }
+        if (flat.isEmpty) {
+          if (state.status == SourceSearchStatus.needsCaptcha ||
+              state.status == SourceSearchStatus.error) {
+            return const SizedBox(height: 8);
+          }
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Center(
+              child: Text('暂无结果', style: theme.textTheme.bodySmall),
+            ),
+          );
+        }
+        if (state.hasMore) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Center(
+              child: TextButton(
+                onPressed: _tryLoadMore,
+                child: const Text('加载更多'),
+              ),
+            ),
+          );
+        }
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          child: Center(
+            child: Text(
+              '已加载全部 · ${flat.length} 条',
+              style: theme.textTheme.bodySmall?.copyWith(color: mute),
+            ),
           ),
-        ),
-      );
-    }
-    if (flat.isEmpty) {
-      if (state.status == SourceSearchStatus.needsCaptcha ||
-          state.status == SourceSearchStatus.error) {
-        return const SizedBox(height: 8);
-      }
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 24),
-        child: Center(
-          child: Text('暂无结果', style: theme.textTheme.bodySmall),
-        ),
-      );
-    }
-    if (state.hasMore) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        child: Center(
-          child: TextButton(
-            onPressed: _tryLoadMore,
-            child: const Text('加载更多'),
-          ),
-        ),
-      );
-    }
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 16),
-      child: Center(
-        child: Text('没有更多了', style: TextStyle(color: mute, fontSize: 12)),
-      ),
+        );
+      },
     );
   }
 
@@ -685,6 +651,71 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           ],
         ),
       ],
+    );
+  }
+}
+
+class _SearchResultTile extends StatelessWidget {
+  final SearchRecord record;
+  final VoidCallback onTap;
+
+  const _SearchResultTile({
+    super.key,
+    required this.record,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            BookCover(
+              url: record.coverUrl,
+              width: 52,
+              height: 70,
+              radius: 6,
+              placeholderIcon: Icons.menu_book_outlined,
+              fadeIn: Duration.zero,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    record.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodyMedium
+                        ?.copyWith(fontWeight: FontWeight.w500),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    record.subtitleLine,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall,
+                  ),
+                  if (record.chapterCount != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      '${record.chapterCount} 集',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -63,13 +63,20 @@ class BookCover extends StatelessWidget {
     if (imageUrl == null || imageUrl.isEmpty) {
       child = placeholder;
     } else {
+      // 按显示尺寸解码，避免列表滚动时解码整图卡顿
+      final dpr = MediaQuery.devicePixelRatioOf(context);
+      final cacheW = (width * dpr).round().clamp(1, 4096);
+      final cacheH = (height * dpr).round().clamp(1, 4096);
       child = ClipRRect(
         borderRadius: BorderRadius.circular(radius),
         child: CachedNetworkImage(
           imageUrl: imageUrl,
           width: width,
           height: height,
+          memCacheWidth: cacheW,
+          memCacheHeight: cacheH,
           fit: BoxFit.cover,
+          filterQuality: FilterQuality.low,
           httpHeaders: {
             'User-Agent':
                 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 '
