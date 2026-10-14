@@ -17,6 +17,7 @@ import '../utils/json_path.dart';
 import '../utils/rule_parser.dart';
 import 'source_auth_bootstrap.dart';
 import 'source_auth_cache.dart';
+import 'source_cookie_manager.dart';
 import 'source_crypto.dart';
 
 /// 书源规则引擎：搜索 / 详情 / 章节 / 音频解析（含可选声明式加解密）。
@@ -24,7 +25,10 @@ class SourceEngine {
   final Dio _dio;
   final SourceAuthCache? authCache;
 
-  SourceEngine({Dio? dio, this.authCache})
+  /// 按书源隔离的持久化 Cookie 管理（null 时退回内存 jar）。
+  final SourceScopedCookieManager? cookieManager;
+
+  SourceEngine({Dio? dio, this.authCache, this.cookieManager})
       : _dio = dio ??
             Dio(BaseOptions(
               connectTimeout: const Duration(seconds: 15),
@@ -39,7 +43,14 @@ class SourceEngine {
                 'Accept-Language': 'zh-CN,zh;q=0.9',
               },
             )) {
-    _dio.interceptors.add(CookieManager(CookieJar()));
+    _dio.interceptors.add(
+      cookieManager ?? CookieManager(CookieJar()),
+    );
+  }
+
+  /// 删除书源时清理其持久化 Cookie。
+  Future<void> clearSourceCookies(String sourceId) async {
+    await cookieManager?.clearFor(sourceId);
   }
 
   /// 校验书源规则 JSON，返回错误信息列表（空列表 = 校验通过）
@@ -149,13 +160,15 @@ class SourceEngine {
     final prepared = _prepareSearchRequest(searchRule, keyword, page: page);
     final url = prepared.url;
     final context = prepared.context;
-    final body = await _fetchText(url, searchRule, context: context);
+    final body = await _fetchText(url, searchRule, context: context,
+        sourceId: source.id);
     await _throwIfCaptcha(source, searchRule, body, pageUrl: url, context: context);
     return _mapSearchRecords(source, searchRule, body, context);
   }
 
   /// 刷新验证码图片（同 Cookie 会话）。
-  Future<Uint8List> refreshCaptchaImage(SearchCaptchaChallenge challenge) async {
+  Future<Uint8List> refreshCaptchaImage(SearchCaptchaChallenge challenge,
+      {String? sourceId}) async {
     final bust = '${challenge.imageUrl}'
         '${challenge.imageUrl.contains('?') ? '&' : '?'}get=${DateTime.now().millisecondsSinceEpoch}';
     return _fetchBytes(
@@ -164,6 +177,7 @@ class SourceEngine {
         'Referer': challenge.pageUrl,
         ...challenge.headers,
       },
+      sourceId: sourceId,
     );
   }
 
@@ -193,7 +207,9 @@ class SourceEngine {
         'Referer': challenge.pageUrl,
       },
     };
-    final body = await _fetchText(challenge.submitUrl, section, context: context);
+    final body =
+        await _fetchText(challenge.submitUrl, section, context: context,
+            sourceId: source.id);
     await _throwIfCaptcha(
       source,
       searchRule,
@@ -229,7 +245,8 @@ class SourceEngine {
     );
     final url =
         renderTemplate(detailRule['url'] as String? ?? record.detailUrl, context);
-    final body = await _fetchText(url, detailRule, context: context);
+    final body =
+        await _fetchText(url, detailRule, context: context, sourceId: source.id);
     final items = RuleParser.parse(
       body,
       (detailRule['parser'] as Map?)?.cast<String, dynamic>() ?? {},
@@ -353,8 +370,8 @@ class SourceEngine {
       if (parser == null || type == 'direct') {
         return _maybeFinalizePlayUrl(source, book, chapter.audioUrl);
       }
-      final pageBody =
-          await _fetchText(chapter.audioUrl, audioSection, context: context);
+      final pageBody = await _fetchText(chapter.audioUrl, audioSection,
+          context: context, sourceId: source.id);
       final items = RuleParser.parse(pageBody, parser, context: context);
       final resolved = items.isNotEmpty
           ? (items.first['audioUrl'] ?? items.first['url'] ?? '')
@@ -845,7 +862,7 @@ class SourceEngine {
     Uint8List? bytes;
     if (imageUrl.isNotEmpty) {
       try {
-        bytes = await _fetchBytes(imageUrl, headers: headers);
+        bytes = await _fetchBytes(imageUrl, headers: headers, sourceId: source.id);
       } catch (_) {}
     }
 
@@ -863,12 +880,16 @@ class SourceEngine {
   Future<Uint8List> _fetchBytes(
     String url, {
     Map<String, String> headers = const {},
+    String? sourceId,
   }) async {
     final res = await _dio.get<List<int>>(
       url,
       options: Options(
         responseType: ResponseType.bytes,
         headers: headers,
+        extra: sourceId == null
+            ? null
+            : {SourceScopedCookieManager.kSourceIdKey: sourceId},
       ),
     );
     return Uint8List.fromList(res.data ?? const <int>[]);
@@ -880,27 +901,28 @@ class SourceEngine {
     Map<String, dynamic> context, {
     String? fallbackUrl,
   }) async {
-    final urls = <String>[];
+    final urls = <String, String>{}; // url → sourceId
     final single = renderTemplate(section['url'] as String? ?? '', context);
-    if (single.isNotEmpty) urls.add(single);
+    if (single.isNotEmpty) urls[single] = source.id;
     final list = section['urls'];
     if (list is List) {
       for (final u in list) {
         final t = renderTemplate(u.toString(), context);
-        if (t.isNotEmpty && !urls.contains(t)) urls.add(t);
+        if (t.isNotEmpty && !urls.containsKey(t)) urls[t] = source.id;
       }
     }
     if (urls.isEmpty && fallbackUrl != null && fallbackUrl.isNotEmpty) {
-      urls.add(fallbackUrl);
+      urls[fallbackUrl] = source.id;
     }
     if (urls.isEmpty) {
       throw SourceRuleException('请求地址为空');
     }
 
     Object? lastError;
-    for (final url in urls) {
+    for (final entry in urls.entries) {
       try {
-        return await _fetchText(url, section, context: context);
+        return await _fetchText(entry.key, section, context: context,
+            sourceId: entry.value);
       } catch (e) {
         lastError = e;
       }
@@ -912,6 +934,7 @@ class SourceEngine {
     String url,
     Map<String, dynamic> section, {
     Map<String, dynamic>? context,
+    String? sourceId,
   }) async {
     final ctx = context ?? <String, dynamic>{};
     final method = ((section['method'] as String?) ?? 'GET').toUpperCase();
@@ -958,6 +981,9 @@ class SourceEngine {
         headers: headers,
         responseType: ResponseType.bytes,
         contentType: contentType,
+        extra: sourceId == null
+            ? null
+            : {SourceScopedCookieManager.kSourceIdKey: sourceId},
       ),
     );
     final bytes = res.data ?? <int>[];

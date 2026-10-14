@@ -42,6 +42,17 @@ class SettingsController extends ChangeNotifier {
   int get autoDownloadAhead => service.autoDownloadAhead;
   String? get preferredSourceId => service.preferredSourceId;
 
+  /// 快进退秒数（播放页 / 通知栏共用）
+  int get skipIntervalSeconds => service.skipIntervalSeconds;
+
+  /// 恢复播放自动回退秒数（0 = 关闭）
+  int get resumeBackoffSeconds => service.resumeBackoffSeconds;
+
+  /// 首次启动标记（引导卡片用）
+  bool get isFirstLaunch => service.isFirstLaunch;
+
+  Future<void> setFirstLaunchDone() => service.setFirstLaunchDone();
+
   String get autoDownloadAheadLabel =>
       autoDownloadAhead == 0 ? '关闭' : '$autoDownloadAhead 章';
 
@@ -89,6 +100,16 @@ class SettingsController extends ChangeNotifier {
 
   Future<void> setAutoDownloadAhead(int value) async {
     await service.setAutoDownloadAhead(value);
+    notifyListeners();
+  }
+
+  Future<void> setSkipIntervalSeconds(int value) async {
+    await service.setSkipIntervalSeconds(value);
+    notifyListeners();
+  }
+
+  Future<void> setResumeBackoffSeconds(int value) async {
+    await service.setResumeBackoffSeconds(value);
     notifyListeners();
   }
 

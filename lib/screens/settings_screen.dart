@@ -178,6 +178,30 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                     Divider(height: 1, color: scheme.outlineVariant),
                     ProtoRow(
+                      title: '快进退秒数',
+                      subtitle: '播放页与通知栏 ± 秒共用',
+                      trailing: Text(
+                        '${settings.skipIntervalSeconds}s',
+                        style: theme.textTheme.bodyMedium
+                            ?.copyWith(color: scheme.onSurfaceVariant),
+                      ),
+                      onTap: () => SkipIntervalSheet.show(context, settings),
+                    ),
+                    Divider(height: 1, color: scheme.outlineVariant),
+                    ProtoRow(
+                      title: '恢复播放回退',
+                      subtitle: '重新打开续听时自动回退，避免接不上',
+                      trailing: Text(
+                        settings.resumeBackoffSeconds == 0
+                            ? '关闭'
+                            : '${settings.resumeBackoffSeconds}s',
+                        style: theme.textTheme.bodyMedium
+                            ?.copyWith(color: scheme.onSurfaceVariant),
+                      ),
+                      onTap: () => ResumeBackoffSheet.show(context, settings),
+                    ),
+                    Divider(height: 1, color: scheme.outlineVariant),
+                    ProtoRow(
                       title: '全局片头片尾',
                       subtitle: '三级优先级最低层',
                       trailing: Text(

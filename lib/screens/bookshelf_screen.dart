@@ -7,6 +7,7 @@ import '../providers/bookshelf_providers.dart';
 import '../providers/player_providers.dart';
 import '../widgets/book_cover.dart';
 import '../widgets/proto_widgets.dart';
+import '../widgets/source_guide_card.dart';
 
 /// 书架 — 对齐原型：标题栏 + 三列封面网格，无顶部续听横幅
 class BookshelfScreen extends ConsumerStatefulWidget {
@@ -129,51 +130,56 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
                       Center(child: CircularProgressIndicator()),
                     ],
                   )
-                : shelf.books.isEmpty
-                    ? ListView(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        children: [
-                          SizedBox(
-                            height: MediaQuery.sizeOf(context).height * 0.55,
-                            child: ProtoEmpty(
-                              icon: Icons.bookmark_border,
-                              title: '书架空空如也',
-                              subtitle: '去搜书，发现下一本好故事',
-                              action: FilledButton(
-                                onPressed: () => context.go('/search'),
-                                child: const Text('去搜书'),
-                              ),
+                : ListView(
+                    padding: EdgeInsets.fromLTRB(16, 4, 16, bottom),
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: [
+                      const SourceGuideCard(),
+                      if (shelf.books.isEmpty)
+                        SizedBox(
+                          height: MediaQuery.sizeOf(context).height * 0.5,
+                          child: ProtoEmpty(
+                            icon: Icons.bookmark_border,
+                            title: '书架空空如也',
+                            subtitle: '去搜书，发现下一本好故事',
+                            action: FilledButton(
+                              onPressed: () => context.go('/search'),
+                              child: const Text('去搜书'),
                             ),
                           ),
-                        ],
-                      )
-                    : GridView.builder(
-                        padding: EdgeInsets.fromLTRB(16, 4, 16, bottom),
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        gridDelegate:
-                            const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 3,
-                          mainAxisSpacing: 12,
-                          crossAxisSpacing: 12,
-                          childAspectRatio: 0.55,
-                        ),
-                        itemCount: shelf.books.length + 1,
-                        itemBuilder: (context, i) {
-                          if (i == shelf.books.length) {
-                            return _AddTile(
-                              onTap: () => context.go('/search'),
+                        )
+                      else ...[
+                        GridView.builder(
+                          padding: EdgeInsets.zero,
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          gridDelegate:
+                              const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 3,
+                            mainAxisSpacing: 12,
+                            crossAxisSpacing: 12,
+                            childAspectRatio: 0.55,
+                          ),
+                          itemCount: shelf.books.length + 1,
+                          itemBuilder: (context, i) {
+                            if (i == shelf.books.length) {
+                              return _AddTile(
+                                onTap: () => context.go('/search'),
+                              );
+                            }
+                            final book = shelf.books[i];
+                            return _ShelfTile(
+                              book: book,
+                              progress: _progressText(book),
+                              onOpen: () =>
+                                  context.push('/book-detail', extra: book),
+                              onRemove: () => _confirmRemove(book),
                             );
-                          }
-                          final book = shelf.books[i];
-                          return _ShelfTile(
-                            book: book,
-                            progress: _progressText(book),
-                            onOpen: () =>
-                                context.push('/book-detail', extra: book),
-                            onRemove: () => _confirmRemove(book),
-                          );
-                        },
-                      ),
+                          },
+                        ),
+                      ],
+                    ],
+                  ),
           ),
         ),
       ],

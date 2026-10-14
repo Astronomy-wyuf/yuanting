@@ -234,9 +234,12 @@ class PlayerController extends ChangeNotifier {
     }
   }
 
-  /// 继续收听：根据上次的章节与进度断点续播；本章已听完则自动跳下一集
+  /// 继续收听：根据上次的章节与进度断点续播；本章已听完则自动跳下一集。
+  ///
+  /// [resumeBackoff] 非空时在恢复进度上回退指定秒数（0/负值不回退），
+  /// 仅冷启动恢复会话后的首次起播使用，App 内暂停/恢复不回退。
   Future<void> continueBook(Book book,
-      {List<Chapter>? knownChapters}) async {
+      {List<Chapter>? knownChapters, Duration? resumeBackoff}) async {
     // 以 DB 中最新进度为准，避免详情页持有过期 Book
     final fresh = await bookRepo.get(book.id);
     final b = fresh ?? book;
@@ -258,6 +261,12 @@ class PlayerController extends ChangeNotifier {
         } else {
           startIndex = idx;
           startAt = Duration.zero;
+        }
+        // 恢复回退：退到 0 以下则从头播
+        if (resumeBackoff != null && resumeBackoff > Duration.zero &&
+            startAt != null && startAt > Duration.zero) {
+          final backed = startAt - resumeBackoff;
+          startAt = backed > Duration.zero ? backed : Duration.zero;
         }
       }
     }
@@ -347,12 +356,17 @@ class PlayerController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 播放 / 暂停（无音频源时从上次会话继续；失败态点播放则强制重解析）
+  /// 播放 / 暂停（无音频源时从上次会话继续；失败态点播放则强制重解析）。
+  ///
+  /// 恢复会话后的首次起播按设置自动回退若干秒（App 内暂停/恢复不回退）。
   Future<void> togglePlay() async {
     if (currentBook == null) return;
     if (player.audioSource == null) {
       // 不要先清空 currentBook，否则播放页会闪「暂无播放」
-      await continueBook(currentBook!);
+      await continueBook(
+        currentBook!,
+        resumeBackoff: Duration(seconds: settings.resumeBackoffSeconds),
+      );
       return;
     }
     if (player.playing) {
@@ -418,6 +432,22 @@ class PlayerController extends ChangeNotifier {
     speed = clamped;
     await service.setSpeed(clamped);
     await settings.setDefaultPlaybackRate(clamped);
+    notifyListeners();
+  }
+
+  /// 快进退秒数（播放页按钮 / 通知栏共用）
+  int get skipIntervalSeconds => settings.skipIntervalSeconds;
+
+  Future<void> setSkipIntervalSeconds(int value) async {
+    await settings.setSkipIntervalSeconds(value);
+    notifyListeners();
+  }
+
+  /// 恢复播放自动回退秒数（0 = 关闭）
+  int get resumeBackoffSeconds => settings.resumeBackoffSeconds;
+
+  Future<void> setResumeBackoffSeconds(int value) async {
+    await settings.setResumeBackoffSeconds(value);
     notifyListeners();
   }
 

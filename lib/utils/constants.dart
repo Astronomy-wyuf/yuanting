@@ -21,6 +21,16 @@ class AppConstants {
   static const String keyAutoDownloadAhead = 'auto_download_ahead';
   static const String keyFirstLaunch = 'first_launch';
   static const String keySearchHistory = 'search_history';
+  static const String keySkipIntervalSeconds = 'skip_interval_seconds';
+  static const String keyResumeBackoffSeconds = 'resume_backoff_seconds';
+
+  /// 快进退秒数：预设档与默认值（播放页 / 通知栏共用）
+  static const List<int> skipIntervalChoices = [10, 15, 20, 30];
+  static const int defaultSkipIntervalSeconds = 30;
+
+  /// 恢复播放自动回退：默认 3 秒，上限 10 秒（0 = 关闭）
+  static const int defaultResumeBackoffSeconds = 3;
+  static const int maxResumeBackoffSeconds = 10;
 
   /// 播放时自动向后补齐的章节数（0 = 关闭）
   static const int defaultAutoDownloadAhead = 3;

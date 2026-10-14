@@ -24,17 +24,20 @@ class PlayerTransport extends ConsumerWidget {
     final hasNext = ref.watch(
       playerControllerProvider.select((p) => p.hasNext),
     );
+    final skipSec = ref.watch(
+      playerControllerProvider.select((p) => p.skipIntervalSeconds),
+    );
     final brand = BrandColors.of(context);
     final player = ref.read(playerControllerProvider);
 
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        _IconBtn(
-          icon: Icons.replay_10_rounded,
-          size: 28,
+        _SkipBtn(
+          seconds: skipSec,
+          forward: false,
           onTap: () => player.seek(
-            player.position - const Duration(seconds: 10),
+            player.position - Duration(seconds: skipSec),
           ),
         ),
         const SizedBox(width: 8),
@@ -57,11 +60,11 @@ class PlayerTransport extends ConsumerWidget {
           onTap: hasNext ? player.next : null,
         ),
         const SizedBox(width: 8),
-        _IconBtn(
-          icon: Icons.forward_30_rounded,
-          size: 28,
+        _SkipBtn(
+          seconds: skipSec,
+          forward: true,
           onTap: () => player.seek(
-            player.position + const Duration(seconds: 30),
+            player.position + Duration(seconds: skipSec),
           ),
         ),
       ],
@@ -144,6 +147,58 @@ class PlayerSecondaryBar extends ConsumerWidget {
             onTap: () => PlayerSleepSheet.show(context, player),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _SkipBtn extends StatelessWidget {
+  final int seconds;
+  final bool forward;
+  final VoidCallback? onTap;
+
+  const _SkipBtn({
+    required this.seconds,
+    required this.forward,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final enabled = onTap != null;
+    final color =
+        enabled ? scheme.onSurface : scheme.onSurface.withValues(alpha: 0.28);
+    // 秒数可配置，Material 内置图标档位固定，用文字圆钮表达
+    return Tooltip(
+      message: forward ? '快进 $seconds 秒' : '快退 $seconds 秒',
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: SizedBox(
+          width: 46,
+          height: 46,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                forward
+                    ? Icons.rotate_right_rounded
+                    : Icons.rotate_left_rounded,
+                size: 22,
+                color: color,
+              ),
+              Text(
+                '$seconds',
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: color,
+                      fontWeight: FontWeight.w600,
+                      height: 1.1,
+                    ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

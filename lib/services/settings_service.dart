@@ -61,6 +61,25 @@ class AppSettingsService {
   bool get isFirstLaunch => prefs.getBool(AppConstants.keyFirstLaunch) ?? true;
   Future<void> setFirstLaunchDone() => prefs.setBool(AppConstants.keyFirstLaunch, false);
 
+  /// 快进退秒数（播放页与通知栏共用；预设 10/15/20/30）
+  int get skipIntervalSeconds =>
+      prefs.getInt(AppConstants.keySkipIntervalSeconds) ??
+      AppConstants.defaultSkipIntervalSeconds;
+  Future<void> setSkipIntervalSeconds(int value) => prefs.setInt(
+        AppConstants.keySkipIntervalSeconds,
+        AppConstants.skipIntervalChoices.contains(value)
+            ? value
+            : AppConstants.defaultSkipIntervalSeconds,
+      );
+
+  /// 恢复播放自动回退秒数（0 = 关闭；仅冷启动恢复后的首次起播生效）
+  int get resumeBackoffSeconds =>
+      prefs.getInt(AppConstants.keyResumeBackoffSeconds) ??
+      AppConstants.defaultResumeBackoffSeconds;
+  Future<void> setResumeBackoffSeconds(int value) =>
+      prefs.setInt(AppConstants.keyResumeBackoffSeconds,
+          value.clamp(0, AppConstants.maxResumeBackoffSeconds));
+
   /// 搜索历史（最近在前，最多 12 条）
   List<String> get searchHistory =>
       prefs.getStringList(AppConstants.keySearchHistory) ?? const [];

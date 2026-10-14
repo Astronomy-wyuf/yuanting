@@ -143,6 +143,13 @@ class AudioPlayerService {
       }
     });
 
+    // 拔耳机 / 断开蓝牙（音频从耳机切到外放）→ 自动暂停，避免外放扰人
+    session.becomingNoisyEventStream.listen((_) {
+      if (player.playing) {
+        player.pause();
+      }
+    });
+
     // 整个播放列表结束
     player.processingStateStream.listen((state) {
       if (state == ProcessingState.completed) {
@@ -439,6 +446,7 @@ class AudioPlayerService {
   void setSleepTimer(SleepTimerState state) {
     _countdownTimer?.cancel();
     _remainingTicker?.cancel();
+    _cancelSleepFade();
 
     if (state.mode == SleepTimerMode.countdown) {
       final minutes = state.minutes.clamp(1, 24 * 60);
@@ -457,6 +465,14 @@ class AudioPlayerService {
         return;
       }
       _countdownTimer = Timer(wait, _stopForSleep);
+      // 停止前 [sleepFadeDuration] 开始渐弱
+      final fadeWait =
+          wait - sleepFadeDuration;
+      if (fadeWait > Duration.zero) {
+        _sleepFadeDelay = Timer(fadeWait, _startSleepFade);
+      } else {
+        _startSleepFade();
+      }
       // 每秒换新实例，驱动 UI 刷新剩余时间
       _remainingTicker = Timer.periodic(const Duration(seconds: 1), (_) {
         sleepTimerState.value = SleepTimerState(
@@ -493,12 +509,50 @@ class AudioPlayerService {
   }
 
   void _stopForSleep() {
+    _cancelSleepFade();
     player.pause();
     _countdownTimer?.cancel();
     _remainingTicker?.cancel();
     _sleep = SleepTimerState.off;
     sleepTimerState.value = SleepTimerState.off;
     onSleepTimerEnd?.call();
+  }
+
+  // ---------------- 睡眠定时音量渐弱 ----------------
+
+  /// 渐弱时长
+  static const Duration sleepFadeDuration = Duration(seconds: 10);
+
+  Timer? _sleepFadeDelay;
+  Timer? _sleepFadeTicker;
+
+  void _startSleepFade() {
+    _sleepFadeTicker?.cancel();
+    var elapsed = 0;
+    final totalSec = sleepFadeDuration.inSeconds;
+    _sleepFadeTicker = Timer.periodic(const Duration(seconds: 1), (_) {
+      elapsed++;
+      if (!player.playing) {
+        _cancelSleepFade();
+        return;
+      }
+      // 线性降到接近 0（留 0.05 避免某些设备对 0 音量的特殊处理）
+      final t = (elapsed / totalSec).clamp(0.0, 1.0);
+      final v = 1.0 - 0.95 * t;
+      player.setVolume(v);
+    });
+  }
+
+  void _cancelSleepFade() {
+    final wasFading = _sleepFadeTicker != null;
+    _sleepFadeDelay?.cancel();
+    _sleepFadeDelay = null;
+    _sleepFadeTicker?.cancel();
+    _sleepFadeTicker = null;
+    // 渐弱中途被取消（用户关闭定时 / 手动停止）→ 恢复原音量
+    if (wasFading) {
+      player.setVolume(1.0);
+    }
   }
 
   void _onChapterStart(int index, {required bool naturalAdvance}) {
@@ -629,6 +683,7 @@ class AudioPlayerService {
 
   /// 释放资源（应用退出时）
   Future<void> dispose() async {
+    _cancelSleepFade();
     _countdownTimer?.cancel();
     _remainingTicker?.cancel();
     await _playbackEventSub?.cancel();

@@ -391,7 +391,8 @@ class AudiobookSearchController extends ChangeNotifier {
     final challenge = state?.captcha;
     if (state == null || challenge == null) return;
     try {
-      final bytes = await engine.refreshCaptchaImage(challenge);
+      final bytes =
+          await engine.refreshCaptchaImage(challenge, sourceId: sourceId);
       bySource[sourceId] = state.copyWith(
         captcha: challenge.copyWith(imageBytes: bytes),
         clearError: true,

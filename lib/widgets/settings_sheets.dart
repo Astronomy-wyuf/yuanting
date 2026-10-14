@@ -113,6 +113,96 @@ class _DefaultSpeedSheetState extends State<DefaultSpeedSheet> {
   }
 }
 
+/// 设置 · 快进退秒数（播放页 / 通知栏共用；通知栏改后需重启生效）
+class SkipIntervalSheet extends StatelessWidget {
+  final SettingsController settings;
+
+  const SkipIntervalSheet({super.key, required this.settings});
+
+  static Future<void> show(BuildContext context, SettingsController settings) {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => SkipIntervalSheet(settings: settings),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final current = settings.skipIntervalSeconds;
+    return AppSheetScaffold(
+      eyebrow: 'PLAYBACK',
+      title: '快进退秒数',
+      subtitle: '播放页 ± 秒与通知栏快进退共用；通知栏改后需重启应用生效',
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AppSheetOptionGrid(
+            crossAxisCount: 4,
+            children: [
+              for (final s in AppConstants.skipIntervalChoices)
+                AppSheetChoice(
+                  label: '$s 秒',
+                  selected: current == s,
+                  onTap: () async {
+                    await settings.setSkipIntervalSeconds(s);
+                    if (context.mounted) Navigator.pop(context);
+                  },
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 设置 · 恢复播放自动回退（仅冷启动恢复后的首次起播生效）
+class ResumeBackoffSheet extends StatelessWidget {
+  final SettingsController settings;
+
+  const ResumeBackoffSheet({super.key, required this.settings});
+
+  static Future<void> show(BuildContext context, SettingsController settings) {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => ResumeBackoffSheet(settings: settings),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final current = settings.resumeBackoffSeconds;
+    return AppSheetScaffold(
+      eyebrow: 'PLAYBACK',
+      title: '恢复播放回退',
+      subtitle: '重新打开应用续听时自动回退，衔接上次停下的位置更自然',
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AppSheetOptionGrid(
+            crossAxisCount: 4,
+            children: [
+              for (final s in const [0, 2, 3, 5, 8, 10])
+                AppSheetChoice(
+                  label: s == 0 ? '关闭' : '$s 秒',
+                  selected: current == s,
+                  onTap: () async {
+                    await settings.setResumeBackoffSeconds(s);
+                    if (context.mounted) Navigator.pop(context);
+                  },
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// 设置 · 下载存储上限
 class StorageLimitSheet extends StatelessWidget {
   final SettingsController settings;

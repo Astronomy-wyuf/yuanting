@@ -208,6 +208,10 @@ class SourcesController extends ChangeNotifier {
 
   Future<void> delete(BookSource source) async {
     await repository.delete(source.id);
+    // 清理该书源的持久化 Cookie（验证码会话、登录态）
+    try {
+      await engine.clearSourceCookies(source.id);
+    } catch (_) {}
     await load();
   }
 }
