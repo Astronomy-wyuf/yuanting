@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
@@ -11,14 +12,22 @@ class StorageService {
 
   Database? _db;
 
-  Future<Database> get database async => _db ??= await _open();
+  /// 测试注入点：设置后 [database] 直接返回该实例（仅供测试使用）
+  @visibleForTesting
+  static Database? instanceOverrideForTest;
+
+  Future<Database> get database async {
+    final override = instanceOverrideForTest;
+    if (override != null) return override;
+    return _db ??= await _open();
+  }
 
   Future<Database> _open() async {
     final dir = await getDatabasesPath();
     final path = p.join(dir, AppConstants.dbFileName);
     return openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -29,6 +38,18 @@ class StorageService {
     if (oldVersion < 2) {
       await db.execute(
         "ALTER TABLE book_sources ADD COLUMN remote_url TEXT",
+      );
+    }
+    if (oldVersion < 3) {
+      // P1：书架分组 / 更新红点 / 书源订阅
+      await db.execute(
+        "ALTER TABLE books ADD COLUMN play_state INTEGER NOT NULL DEFAULT 0",
+      );
+      await db.execute(
+        "ALTER TABLE books ADD COLUMN new_chapters INTEGER NOT NULL DEFAULT 0",
+      );
+      await db.execute(
+        "ALTER TABLE book_sources ADD COLUMN auto_update INTEGER NOT NULL DEFAULT 0",
       );
     }
   }
@@ -45,7 +66,8 @@ class StorageService {
         rule_json TEXT NOT NULL,
         enabled INTEGER NOT NULL DEFAULT 1,
         imported_at INTEGER NOT NULL,
-        remote_url TEXT
+        remote_url TEXT,
+        auto_update INTEGER NOT NULL DEFAULT 0
       )
     ''');
     await db.execute('''
@@ -64,7 +86,9 @@ class StorageService {
         last_play_time INTEGER,
         total_chapters INTEGER,
         skip_intro INTEGER,
-        skip_outro INTEGER
+        skip_outro INTEGER,
+        play_state INTEGER NOT NULL DEFAULT 0,
+        new_chapters INTEGER NOT NULL DEFAULT 0
       )
     ''');
     await db.execute('''

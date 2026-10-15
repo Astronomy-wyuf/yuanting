@@ -80,6 +80,21 @@ class AppSettingsService {
       prefs.setInt(AppConstants.keyResumeBackoffSeconds,
           value.clamp(0, AppConstants.maxResumeBackoffSeconds));
 
+  /// 下载并发数（1~5）
+  int get downloadConcurrent =>
+      prefs.getInt(AppConstants.keyDownloadConcurrent) ??
+      AppConstants.defaultDownloadConcurrent;
+  Future<void> setDownloadConcurrent(int value) => prefs.setInt(
+        AppConstants.keyDownloadConcurrent,
+        value.clamp(1, AppConstants.maxDownloadConcurrent),
+      );
+
+  /// 上次书源订阅同步时间（毫秒时间戳；0 = 从未）
+  int get lastSourceSyncMs =>
+      prefs.getInt(AppConstants.keyLastSourceSyncMs) ?? 0;
+  Future<void> setLastSourceSyncMs(int value) =>
+      prefs.setInt(AppConstants.keyLastSourceSyncMs, value);
+
   /// 搜索历史（最近在前，最多 12 条）
   List<String> get searchHistory =>
       prefs.getStringList(AppConstants.keySearchHistory) ?? const [];

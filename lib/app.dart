@@ -8,6 +8,7 @@ import 'providers/download_providers.dart';
 import 'providers/player_providers.dart';
 import 'providers/settings_providers.dart';
 import 'providers/source_providers.dart';
+import 'providers/source_sync_providers.dart';
 import 'screens/about_screen.dart';
 import 'screens/book_detail_screen.dart';
 import 'screens/bookshelf_screen.dart';
@@ -158,6 +159,9 @@ class _AudiobookAppState extends ConsumerState<AudiobookApp> {
       ref.read(playerControllerProvider).restoreLastSession();
       ref.read(sourcesControllerProvider).load();
       ref.read(downloadServiceProvider).load();
+      // 书源订阅：距上次同步超过 24 小时则后台拉取一次
+      Future.microtask(
+          () => ref.read(sourceSyncServiceProvider).maybeAutoSync());
     });
   }
 

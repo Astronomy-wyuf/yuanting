@@ -14,6 +14,8 @@ final downloadServiceProvider =
   return DownloadService(
     repository: ref.watch(downloadRepositoryProvider),
     settings: ref.watch(settingsServiceProvider),
+    // 复用引擎 Dio：UA / Cookie 拦截器齐全，裸请求会被部分音频 CDN 403
+    dio: engine.http,
     urlResolver: (DownloadTask task) async {
       final book = await bookRepo.get(task.bookId);
       if (book == null) return task.url;

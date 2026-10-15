@@ -23,6 +23,21 @@ class Book {
   /// 书籍级片尾跳过秒数；null = 使用书源默认
   final int? skipOutro;
 
+  /// 收听状态：0 未听 / 1 在听 / 2 听完
+  final int playState;
+
+  /// 章节更新红点：检测到的新章节数（打开详情后清零）
+  final int newChapters;
+
+  /// 未听
+  static const int stateUnlistened = 0;
+
+  /// 在听
+  static const int stateListening = 1;
+
+  /// 听完
+  static const int stateFinished = 2;
+
   const Book({
     required this.id,
     required this.sourceId,
@@ -39,7 +54,10 @@ class Book {
     this.totalChapters,
     this.skipIntro,
     this.skipOutro,
-  });
+    int? playState,
+    int? newChapters,
+  })  : playState = playState ?? stateUnlistened,
+        newChapters = newChapters ?? 0;
 
   static String buildId(String sourceId, String sourceBookId) => '$sourceId::$sourceBookId';
 
@@ -61,6 +79,8 @@ class Book {
     Object? totalChapters = _unset,
     Object? skipIntro = _unset,
     Object? skipOutro = _unset,
+    int? playState,
+    int? newChapters,
   }) {
     return Book(
       id: id ?? this.id,
@@ -84,6 +104,8 @@ class Book {
           : totalChapters as int?,
       skipIntro: identical(skipIntro, _unset) ? this.skipIntro : skipIntro as int?,
       skipOutro: identical(skipOutro, _unset) ? this.skipOutro : skipOutro as int?,
+      playState: playState ?? this.playState,
+      newChapters: newChapters ?? this.newChapters,
     );
   }
 
@@ -103,6 +125,8 @@ class Book {
         'total_chapters': totalChapters,
         'skip_intro': skipIntro,
         'skip_outro': skipOutro,
+        'play_state': playState,
+        'new_chapters': newChapters,
       };
 
   factory Book.fromMap(Map<String, dynamic> map) => Book(
@@ -123,5 +147,7 @@ class Book {
         totalChapters: (map['total_chapters'] as num?)?.toInt(),
         skipIntro: (map['skip_intro'] as num?)?.toInt(),
         skipOutro: (map['skip_outro'] as num?)?.toInt(),
+        playState: (map['play_state'] as num?)?.toInt() ?? stateUnlistened,
+        newChapters: (map['new_chapters'] as num?)?.toInt() ?? 0,
       );
 }

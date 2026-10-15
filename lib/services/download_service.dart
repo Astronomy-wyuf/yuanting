@@ -16,19 +16,16 @@ import '../services/settings_service.dart';
 import '../utils/constants.dart';
 
 /// 下载服务：音频下载到应用文档目录 downloads/ 子目录。
-/// - 全局并发限制（默认 2）
+/// - 全局并发限制（用户可配置 1~5，默认 2）
 /// - 流式写入 + Range 断点续传
 /// - 存储上限 / 仅 Wi‑Fi
 class DownloadService extends ChangeNotifier {
-  static const int maxConcurrent = 2;
-
   final DownloadRepository repository;
   final AppSettingsService settings;
-  final Dio _dio = Dio(BaseOptions(
-    connectTimeout: const Duration(seconds: 20),
-    receiveTimeout: const Duration(seconds: 60),
-    validateStatus: (code) => code != null && code < 400,
-  ));
+
+  /// 复用 SourceEngine 的 Dio（UA / Accept-Language / Cookie 拦截器齐全）。
+  /// 音频直链与取链请求保持相同默认头，裸请求会被部分 CDN 403。
+  final Dio _dio;
   final _uuid = const Uuid();
   final Map<String, CancelToken> _tokens = {};
   final Set<String> _running = {};
@@ -44,13 +41,22 @@ class DownloadService extends ChangeNotifier {
   DownloadService({
     required this.repository,
     required this.settings,
+    Dio? dio,
     this.urlResolver,
     this.headerResolver,
-  });
+  }) : _dio = dio ?? Dio(BaseOptions(
+          connectTimeout: const Duration(seconds: 20),
+          receiveTimeout: const Duration(seconds: 60),
+          validateStatus: (code) => code != null && code < 400,
+        ));
 
   int get maxStorageMB => settings.downloadMaxStorageMB;
 
   bool get wifiOnlyDownload => settings.wifiOnlyDownload;
+
+  /// 当前并发上限（来自设置）
+  int get maxConcurrent =>
+      settings.downloadConcurrent.clamp(1, AppConstants.maxDownloadConcurrent);
 
   int get activeCount =>
       tasks.where((t) => t.isActive).length;
@@ -148,6 +154,61 @@ class DownloadService extends ChangeNotifier {
     if (existing != null &&
         (existing.status == DownloadStatus.failed ||
             existing.status == DownloadStatus.paused)) {
+      return _enqueue(book, chapter, existing);
+    }
+
+    final maxMb = maxStorageMB;
+    final maxBytes = maxMb * 1024 * 1024;
+    final used = await usedBytes();
+    if (used >= maxBytes) {
+      return '下载存储已达上限（${maxMb}MB），请先清理已下载内容';
+    }
+
+    return _enqueue(book, chapter, null);
+  }
+
+  /// 批量入队；返回成功加入数与首个门禁错误。
+  ///
+  /// 门禁（Wi‑Fi / 存储上限）只检查一次，避免逐章全盘扫描 usedBytes()
+  /// 导致大批量下载时 UI 长时间卡住（表现即「提示一直不消失」）。
+  Future<({int added, String? error})> startMany(
+    Book book,
+    List<Chapter> chapters,
+  ) async {
+    var added = 0;
+    // 门禁检查一次（批量前）
+    final wifiMsg = await _wifiGateMessage();
+    if (wifiMsg != null) return (added: 0, error: wifiMsg);
+    final maxMb = maxStorageMB;
+    final maxBytes = maxMb * 1024 * 1024;
+    final used = await usedBytes();
+
+    for (final ch in chapters) {
+      final existing = taskForChapter(ch.id);
+      if (existing != null &&
+          existing.status != DownloadStatus.failed &&
+          existing.status != DownloadStatus.paused) {
+        continue;
+      }
+      // 已有任务重试不计存储；新任务按已用空间估算拦截（粗略，不再逐章扫描）
+      if (existing == null && used >= maxBytes) {
+        return (
+          added: added,
+          error: '下载存储已达上限（${maxMb}MB），请先清理已下载内容',
+        );
+      }
+      final msg = await _enqueue(book, ch, existing);
+      if (msg.isNotEmpty) {
+        return (added: added, error: msg);
+      }
+      added++;
+    }
+    return (added: added, error: null);
+  }
+
+  /// 单章入队核心（不做 Wi‑Fi / 上限检查，由调用方决定）
+  Future<String> _enqueue(Book book, Chapter chapter, DownloadTask? existing) async {
+    if (existing != null) {
       final withUrl = existing.copyWith(
         url: chapter.audioUrl,
         status: DownloadStatus.pending,
@@ -174,13 +235,6 @@ class DownloadService extends ChangeNotifier {
       return '';
     }
 
-    final maxMb = maxStorageMB;
-    final maxBytes = maxMb * 1024 * 1024;
-    final used = await usedBytes();
-    if (used >= maxBytes) {
-      return '下载存储已达上限（${maxMb}MB），请先清理已下载内容';
-    }
-
     final dir = await _downloadDir();
     final ext = _extensionOf(chapter.audioUrl);
     final safeId = chapter.id.replaceAll(RegExp(r'[^A-Za-z0-9_\-]'), '_');
@@ -202,28 +256,6 @@ class DownloadService extends ChangeNotifier {
     notifyListeners();
     _schedule();
     return '';
-  }
-
-  /// 批量入队；返回成功加入数与首个门禁错误
-  Future<({int added, String? error})> startMany(
-    Book book,
-    List<Chapter> chapters,
-  ) async {
-    var added = 0;
-    for (final ch in chapters) {
-      final existing = taskForChapter(ch.id);
-      if (existing != null &&
-          existing.status != DownloadStatus.failed &&
-          existing.status != DownloadStatus.paused) {
-        continue;
-      }
-      final msg = await start(book, ch);
-      if (msg.isNotEmpty) {
-        return (added: added, error: msg);
-      }
-      added++;
-    }
-    return (added: added, error: null);
   }
 
   void pause(String taskId) {
@@ -506,7 +538,8 @@ class DownloadService extends ChangeNotifier {
         _updateTask(task.id, status: DownloadStatus.paused, error: null);
       } else {
         _updateTask(task.id,
-            status: DownloadStatus.failed, error: e.message ?? '网络错误');
+            status: DownloadStatus.failed,
+            error: _describeDioError(e));
       }
     } catch (e) {
       _updateTask(task.id, status: DownloadStatus.failed, error: e.toString());
@@ -554,5 +587,34 @@ class DownloadService extends ChangeNotifier {
       if (RegExp(r'^\.[a-z0-9]{2,5}$').hasMatch(ext)) return ext;
     }
     return '.mp3';
+  }
+
+  /// 把 DioException 转成可读的失败原因（不再笼统显示「网络错误」）
+  String _describeDioError(DioException e) {
+    final code = e.response?.statusCode;
+    switch (e.type) {
+      case DioExceptionType.connectionTimeout:
+      case DioExceptionType.sendTimeout:
+      case DioExceptionType.receiveTimeout:
+        return '连接超时，请检查网络';
+      case DioExceptionType.connectionError:
+        return '无法连接到音频服务器，请检查网络';
+      case DioExceptionType.badCertificate:
+        return '证书校验失败';
+      case DioExceptionType.cancel:
+        return '已取消';
+      case DioExceptionType.badResponse:
+        return switch (code) {
+          403 => '服务器拒绝访问（403），该直链可能需要书源请求头',
+          404 => '音频文件不存在（404），直链可能已失效',
+          410 => '音频文件已失效（410）',
+          _ => '服务器错误（HTTP $code）',
+        };
+      default:
+        final msg = e.message ?? e.error?.toString() ?? '';
+        if (msg.contains('Failed host lookup')) return '域名解析失败，请检查网络';
+        if (msg.isNotEmpty) return '下载失败：$msg';
+        return '下载失败';
+    }
   }
 }

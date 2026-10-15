@@ -39,6 +39,23 @@ class SourceRepository {
         where: 'id = ?', whereArgs: [id]);
   }
 
+  /// 设置书源订阅（随「检查更新」自动从 remoteUrl 拉取）
+  Future<void> setAutoUpdate(String id, bool autoUpdate) async {
+    final db = await _db;
+    await db.update('book_sources', {'auto_update': autoUpdate ? 1 : 0},
+        where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// 所有开启订阅的书源
+  Future<List<BookSource>> listAutoUpdate() async {
+    final db = await _db;
+    final rows = await db.query(
+      'book_sources',
+      where: "auto_update = 1 AND remote_url IS NOT NULL AND remote_url != ''",
+    );
+    return rows.map((r) => BookSource.fromMap(r)).toList();
+  }
+
   Future<void> delete(String id) async {
     final db = await _db;
     await db.delete('book_sources', where: 'id = ?', whereArgs: [id]);

@@ -53,6 +53,11 @@ class SourceEngine {
     await cookieManager?.clearFor(sourceId);
   }
 
+  /// 底层 Dio（含 UA / Accept-Language / Cookie 拦截器）。
+  /// 供下载等服务复用：音频直链请求与取链请求使用相同的默认头，
+  /// 避免裸请求（无 UA）被 CDN 拒绝（403 → 报「网络错误」）。
+  Dio get http => _dio;
+
   /// 校验书源规则 JSON，返回错误信息列表（空列表 = 校验通过）
   List<String> validate(Map<String, dynamic> raw) {
     final errors = <String>[];

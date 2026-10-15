@@ -22,6 +22,8 @@ class SourcesScreen extends ConsumerStatefulWidget {
 }
 
 class _SourcesScreenState extends ConsumerState<SourcesScreen> {
+  bool _syncing = false;
+
   @override
   void initState() {
     super.initState();
@@ -345,6 +347,28 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
     });
   }
 
+  Future<void> _syncAll() async {
+    if (_syncing) return;
+    setState(() => _syncing = true);
+    try {
+      final result =
+          await ref.read(sourcesControllerProvider).syncSubscribed();
+      if (!mounted) return;
+      if (result.okCount == 0 && result.errors.isEmpty) {
+        _toast('暂无已订阅的书源');
+      } else if (result.errors.isEmpty) {
+        _toast('已同步 ${result.okCount} 个订阅书源');
+      } else {
+        _showCopyableError(
+          '同步完成（${result.okCount} 成功 / ${result.errors.length} 失败）',
+          result.errors.join('\n'),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _syncing = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final sources = ref.watch(sourcesControllerProvider);
@@ -372,6 +396,11 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
                         fontSize: 17,
                       ),
                     ),
+                  ),
+                  IconButton(
+                    tooltip: '同步全部订阅',
+                    onPressed: _syncAll,
+                    icon: Icon(Icons.sync, color: scheme.onSurfaceVariant),
                   ),
                   IconButton(
                     onPressed: _showImportSheet,
@@ -495,6 +524,25 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
                     child: OutlinedButton(
                       onPressed: () => _updateRemote(source),
                       child: const Text('更新'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  // 订阅开关：仅网络书源可开
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => ref
+                          .read(sourcesControllerProvider)
+                          .setAutoUpdate(source, !source.autoUpdate),
+                      icon: Icon(
+                        source.autoUpdate
+                            ? Icons.notifications_active
+                            : Icons.notifications_off_outlined,
+                        size: 16,
+                        color: source.autoUpdate
+                            ? BrandColors.of(context).accent
+                            : null,
+                      ),
+                      label: Text(source.autoUpdate ? '已订阅' : '订阅'),
                     ),
                   ),
                   const SizedBox(width: 8),

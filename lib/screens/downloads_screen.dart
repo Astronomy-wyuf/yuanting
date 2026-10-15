@@ -115,6 +115,35 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
     }
   }
 
+  Future<void> _toggleAll() async {
+    final service = ref.read(downloadServiceProvider);
+    if (service.tasks.isEmpty) return;
+    final hasActive = service.tasks.any((t) => t.isActive);
+    if (hasActive) {
+      service.pauseAll();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已暂停全部下载'), duration: Duration(seconds: 2)),
+      );
+      return;
+    }
+    // 恢复全部（暂停 + 失败）
+    String? firstError;
+    for (final t in List<DownloadTask>.from(service.tasks)) {
+      if (t.status != DownloadStatus.paused &&
+          t.status != DownloadStatus.failed) {
+        continue;
+      }
+      final msg = await service.resume(t.id);
+      firstError ??= msg;
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(firstError ?? '已继续全部下载'),
+      duration: const Duration(seconds: 2),
+    ));
+  }
+
   @override
   Widget build(BuildContext context) {
     final service = ref.watch(downloadServiceProvider);
@@ -137,6 +166,13 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
     final maxBytes = settings.maxStorageMB * 1024 * 1024;
     final used = _usedBytes < 0 ? 0 : _usedBytes;
     final ratio = maxBytes > 0 ? (used / maxBytes).clamp(0.0, 1.0) : 0.0;
+    final hasActive = service.tasks.any((t) => t.isActive);
+    // 可恢复数：暂停 + 失败
+    final resumableCount = service.tasks
+        .where((t) =>
+            t.status == DownloadStatus.paused ||
+            t.status == DownloadStatus.failed)
+        .length;
 
     // 任务完成后刷新占用空间
     ref.listen(downloadServiceProvider, (prev, next) {
@@ -150,18 +186,19 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
           child: ProtoPageTitle(
             '下载',
             actions: [
-              if (service.tasks.any((t) => t.isActive))
-                TextButton(
-                  onPressed: () {
-                    service.pauseAll();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('已暂停全部进行中任务')),
-                    );
-                  },
-                  child: Text(
-                    '全部暂停',
+              // 统一的全局 开始/暂停 按钮
+              if (service.tasks.isNotEmpty)
+                TextButton.icon(
+                  onPressed: _toggleAll,
+                  icon: Icon(
+                    hasActive ? Icons.pause_circle_outline : Icons.play_circle_outline,
+                    size: 18,
+                    color: hasActive ? scheme.onSurfaceVariant : brand.accent,
+                  ),
+                  label: Text(
+                    hasActive ? '全部暂停' : '全部继续${resumableCount > 0 ? ' ($resumableCount)' : ''}',
                     style: theme.textTheme.bodySmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
+                      color: hasActive ? scheme.onSurfaceVariant : brand.accent,
                     ),
                   ),
                 ),

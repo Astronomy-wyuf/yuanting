@@ -26,6 +26,18 @@ class BookRepository {
     return books;
   }
 
+  /// 按收听状态取书架（0 未听 / 1 在听 / 2 听完）
+  Future<List<Book>> listShelfByState(int playState) async {
+    final db = await _db;
+    final rows = await db.query(
+      'books',
+      where: 'play_state = ?',
+      whereArgs: [playState],
+      orderBy: 'updated_at DESC',
+    );
+    return rows.map((r) => Book.fromMap(r)).toList();
+  }
+
   /// 最近收听过的一本书（用于启动恢复迷你条）
   Future<Book?> getLastPlayed() async {
     final books = await listShelfByLastPlay();
@@ -81,7 +93,7 @@ class BookRepository {
     return rows.map((r) => Chapter.fromMap(r)).toList();
   }
 
-  /// 更新最近播放状态
+  /// 更新最近播放状态，并把播放状态推进为「在听」、清除更新红点
   Future<void> updatePlayState(String bookId, String chapterId) async {
     final db = await _db;
     await db.update(
@@ -90,9 +102,44 @@ class BookRepository {
         'last_play_chapter_id': chapterId,
         'last_play_time': DateTime.now().millisecondsSinceEpoch,
         'updated_at': DateTime.now().millisecondsSinceEpoch,
+        'play_state': Book.stateListening,
+        'new_chapters': 0,
       },
       where: 'id = ?',
       whereArgs: [bookId],
     );
+  }
+
+  /// 更新收听状态
+  Future<void> updatePlayStateFlag(String bookId, int playState) async {
+    final db = await _db;
+    await db.update(
+      'books',
+      {'play_state': playState},
+      where: 'id = ?',
+      whereArgs: [bookId],
+    );
+  }
+
+  /// 写入章节更新红点数（0 = 清除）
+  Future<void> updateNewChapters(String bookId, int count) async {
+    final db = await _db;
+    await db.update(
+      'books',
+      {'new_chapters': count},
+      where: 'id = ?',
+      whereArgs: [bookId],
+    );
+  }
+
+  /// 有新章节红点的书架书籍
+  Future<List<Book>> listWithNewChapters() async {
+    final db = await _db;
+    final rows = await db.query(
+      'books',
+      where: 'new_chapters > 0',
+      orderBy: 'updated_at DESC',
+    );
+    return rows.map((r) => Book.fromMap(r)).toList();
   }
 }

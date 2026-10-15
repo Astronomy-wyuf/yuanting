@@ -16,6 +16,9 @@ class BookSource {
   /// 网络导入时的 JSON 地址；空表示本地（粘贴/文件）导入。
   final String? remoteUrl;
 
+  /// 订阅：随「检查更新」自动从 [remoteUrl] 拉取并覆盖规则
+  final bool autoUpdate;
+
   const BookSource({
     required this.id,
     required this.name,
@@ -27,6 +30,7 @@ class BookSource {
     this.enabled = true,
     required this.importedAt,
     this.remoteUrl,
+    this.autoUpdate = false,
   });
 
   bool get isRemote => remoteUrl != null && remoteUrl!.trim().isNotEmpty;
@@ -42,6 +46,7 @@ class BookSource {
     bool? enabled,
     DateTime? importedAt,
     Object? remoteUrl = _unset,
+    bool? autoUpdate,
   }) {
     return BookSource(
       id: id ?? this.id,
@@ -56,6 +61,7 @@ class BookSource {
       remoteUrl: identical(remoteUrl, _unset)
           ? this.remoteUrl
           : remoteUrl as String?,
+      autoUpdate: autoUpdate ?? this.autoUpdate,
     );
   }
 
@@ -93,6 +99,7 @@ class BookSource {
         'enabled': enabled ? 1 : 0,
         'imported_at': importedAt.millisecondsSinceEpoch,
         'remote_url': remoteUrl,
+        'auto_update': autoUpdate ? 1 : 0,
       };
 
   factory BookSource.fromMap(Map<String, dynamic> map) => BookSource(
@@ -107,6 +114,7 @@ class BookSource {
         importedAt: DateTime.fromMillisecondsSinceEpoch(
             (map['imported_at'] as num?)?.toInt() ?? 0),
         remoteUrl: map['remote_url'] as String?,
+        autoUpdate: (map['auto_update'] as num? ?? 0) == 1,
       );
 
   /// 导出为书源规则 JSON（可再次导入的格式）

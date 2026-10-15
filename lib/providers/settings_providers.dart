@@ -48,6 +48,9 @@ class SettingsController extends ChangeNotifier {
   /// 恢复播放自动回退秒数（0 = 关闭）
   int get resumeBackoffSeconds => service.resumeBackoffSeconds;
 
+  /// 下载并发数（1~5）
+  int get downloadConcurrent => service.downloadConcurrent;
+
   /// 首次启动标记（引导卡片用）
   bool get isFirstLaunch => service.isFirstLaunch;
 
@@ -110,6 +113,11 @@ class SettingsController extends ChangeNotifier {
 
   Future<void> setResumeBackoffSeconds(int value) async {
     await service.setResumeBackoffSeconds(value);
+    notifyListeners();
+  }
+
+  Future<void> setDownloadConcurrent(int value) async {
+    await service.setDownloadConcurrent(value);
     notifyListeners();
   }
 

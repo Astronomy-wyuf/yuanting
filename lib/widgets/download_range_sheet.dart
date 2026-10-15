@@ -118,7 +118,14 @@ class _DownloadRangeSheetState extends ConsumerState<DownloadRangeSheet> {
     }
     final targets = _chaptersFor(kind);
     final svc = ref.read(downloadServiceProvider);
-    final result = await svc.startMany(widget.book, targets);
+
+    // 无论入队结果如何都先关弹层，避免批量任务慢时弹层长时间挂住
+    ({int added, String? error}) result;
+    try {
+      result = await svc.startMany(widget.book, targets);
+    } catch (e) {
+      result = (added: 0, error: '加入下载失败: $e');
+    }
     if (!mounted) return;
     Navigator.pop(context);
 

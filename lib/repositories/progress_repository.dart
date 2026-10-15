@@ -23,6 +23,14 @@ class ProgressRepository {
     return PlayProgress.fromMap(rows.first);
   }
 
+  /// 书籍全部播放进度（备份用）
+  Future<List<PlayProgress>> listForBook(String bookId) async {
+    final db = await _db;
+    final rows = await db.query('play_progress',
+        where: 'book_id = ?', whereArgs: [bookId], orderBy: 'updated_at ASC');
+    return rows.map((r) => PlayProgress.fromMap(r)).toList();
+  }
+
   Future<void> save(PlayProgress progress) async {
     final db = await _db;
     await db.insert('play_progress', progress.toMap(),

@@ -23,6 +23,8 @@ class AppConstants {
   static const String keySearchHistory = 'search_history';
   static const String keySkipIntervalSeconds = 'skip_interval_seconds';
   static const String keyResumeBackoffSeconds = 'resume_backoff_seconds';
+  static const String keyDownloadConcurrent = 'download_concurrent';
+  static const String keyLastSourceSyncMs = 'last_source_sync_ms';
 
   /// 快进退秒数：预设档与默认值（播放页 / 通知栏共用）
   static const List<int> skipIntervalChoices = [10, 15, 20, 30];
@@ -31,6 +33,13 @@ class AppConstants {
   /// 恢复播放自动回退：默认 3 秒，上限 10 秒（0 = 关闭）
   static const int defaultResumeBackoffSeconds = 3;
   static const int maxResumeBackoffSeconds = 10;
+
+  /// 下载并发数（1~5，默认 2）
+  static const int defaultDownloadConcurrent = 2;
+  static const int maxDownloadConcurrent = 5;
+
+  /// 书源订阅自动同步间隔（24 小时）
+  static const int sourceSyncIntervalMs = 24 * 60 * 60 * 1000;
 
   /// 播放时自动向后补齐的章节数（0 = 关闭）
   static const int defaultAutoDownloadAhead = 3;

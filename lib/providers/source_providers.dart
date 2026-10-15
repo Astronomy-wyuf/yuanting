@@ -180,6 +180,13 @@ class SourcesController extends ChangeNotifier {
     await load();
   }
 
+  /// 设置书源订阅（仅网络书源可开；关闭仅改标记）
+  Future<void> setAutoUpdate(BookSource source, bool value) async {
+    if (value && !source.isRemote) return;
+    await repository.setAutoUpdate(source.id, value);
+    await load();
+  }
+
   /// 用编辑后的规则 JSON 覆盖书源
   Future<List<String>> updateRule(BookSource source, String ruleText) async {
     dynamic decoded;
@@ -213,6 +220,24 @@ class SourcesController extends ChangeNotifier {
       await engine.clearSourceCookies(source.id);
     } catch (_) {}
     await load();
+  }
+
+  /// 同步所有开启订阅的书源（拉取 remoteUrl 并按 url 去重覆盖）。
+  /// 返回 (成功源数, 失败详情列表)。
+  Future<({int okCount, List<String> errors})> syncSubscribed() async {
+    final subs = await repository.listAutoUpdate();
+    if (subs.isEmpty) return (okCount: 0, errors: <String>[]);
+    var ok = 0;
+    final errors = <String>[];
+    for (final source in subs) {
+      final result = await updateFromRemote(source);
+      if (result.okCount > 0) {
+        ok++;
+      } else {
+        errors.add('${source.name}: ${result.errors.join('；')}');
+      }
+    }
+    return (okCount: ok, errors: errors);
   }
 }
 

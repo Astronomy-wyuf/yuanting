@@ -7,6 +7,7 @@ import '../repositories/book_repository.dart';
 import '../repositories/download_repository.dart';
 import '../repositories/progress_repository.dart';
 import '../repositories/source_repository.dart';
+import '../services/backup_service.dart';
 import '../services/settings_service.dart';
 import '../services/source_auth_cache.dart';
 import '../services/source_cookie_manager.dart';
@@ -48,3 +49,12 @@ final progressRepositoryProvider =
     Provider<ProgressRepository>((ref) => ProgressRepository());
 final downloadRepositoryProvider =
     Provider<DownloadRepository>((ref) => DownloadRepository());
+
+/// 本地备份（书架 + 进度 + 书源）
+final backupServiceProvider = Provider<BackupService>((ref) {
+  return BackupService(
+    bookRepo: ref.watch(bookRepositoryProvider),
+    progressRepo: ref.watch(progressRepositoryProvider),
+    sourceRepo: ref.watch(sourceRepositoryProvider),
+  );
+});

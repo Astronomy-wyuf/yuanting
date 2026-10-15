@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../providers/app_providers.dart';
+import '../providers/bookshelf_providers.dart';
 import '../providers/player_providers.dart';
 import '../providers/settings_providers.dart';
 import '../providers/source_providers.dart';
@@ -22,6 +24,67 @@ class SettingsScreen extends ConsumerStatefulWidget {
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   String _fmt(double r) =>
       r == r.roundToDouble() ? r.toStringAsFixed(0) : r.toStringAsFixed(1);
+
+  Future<void> _exportBackup() async {
+    final backup = ref.read(backupServiceProvider);
+    try {
+      final path = await backup.exportToFile();
+      if (!mounted) return;
+      if (path == null) return; // 用户取消
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('备份已保存：$path')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('导出失败: $e')),
+      );
+    }
+  }
+
+  Future<void> _restoreBackup() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('从备份恢复'),
+        content: const Text('将导入备份中的书源、书架与收听进度。\n'
+            '相同 id 的记录会被覆盖，其余保留。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('继续'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final backup = ref.read(backupServiceProvider);
+    try {
+      final stats = await backup.restoreFromFile();
+      if (!mounted) return;
+      if (stats == null) return; // 用户取消
+      // 恢复后刷新各控制器缓存
+      await ref.read(sourcesControllerProvider).load();
+      await ref.read(bookshelfControllerProvider).load();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('恢复完成：${stats.label}')),
+      );
+    } on FormatException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('文件无效：${e.message}')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('恢复失败: $e')),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -277,9 +340,45 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                     Divider(height: 1, color: scheme.outlineVariant),
                     ProtoRow(
+                      title: '下载并发数',
+                      subtitle: '同时下载的章节数，立即生效',
+                      trailing: Text(
+                        '${settings.downloadConcurrent}',
+                        style: theme.textTheme.bodyMedium
+                            ?.copyWith(color: scheme.onSurfaceVariant),
+                      ),
+                      onTap: () =>
+                          DownloadConcurrentSheet.show(context, settings),
+                    ),
+                    Divider(height: 1, color: scheme.outlineVariant),
+                    ProtoRow(
                       title: '书源管理',
                       trailing: ProtoBadge('$enabledCount 启用'),
                       onTap: () => context.push('/sources'),
+                    ),
+                  ],
+                ),
+              ),
+              const ProtoSectionLabel('备份与恢复'),
+              ProtoCard(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                margin: const EdgeInsets.only(bottom: 16),
+                child: Column(
+                  children: [
+                    ProtoRow(
+                      title: '导出备份',
+                      subtitle: '书架 + 收听进度 + 书源规则 → JSON 文件',
+                      trailing: Icon(Icons.ios_share,
+                          size: 18, color: scheme.onSurfaceVariant),
+                      onTap: _exportBackup,
+                    ),
+                    Divider(height: 1, color: scheme.outlineVariant),
+                    ProtoRow(
+                      title: '从备份恢复',
+                      subtitle: '导入备份文件，合并到当前数据',
+                      trailing: Icon(Icons.restore,
+                          size: 18, color: scheme.onSurfaceVariant),
+                      onTap: _restoreBackup,
                     ),
                   ],
                 ),

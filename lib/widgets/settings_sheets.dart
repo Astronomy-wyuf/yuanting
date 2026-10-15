@@ -203,6 +203,51 @@ class ResumeBackoffSheet extends StatelessWidget {
   }
 }
 
+/// 设置 · 下载并发数（1~5，立即生效）
+class DownloadConcurrentSheet extends StatelessWidget {
+  final SettingsController settings;
+
+  const DownloadConcurrentSheet({super.key, required this.settings});
+
+  static Future<void> show(BuildContext context, SettingsController settings) {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => DownloadConcurrentSheet(settings: settings),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final current = settings.downloadConcurrent;
+    return AppSheetScaffold(
+      eyebrow: 'STORAGE',
+      title: '下载并发数',
+      subtitle: '同时下载的章节数；过大可能拖慢网络或触发站点限流',
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AppSheetOptionGrid(
+            crossAxisCount: 5,
+            children: [
+              for (var i = 1; i <= 5; i++)
+                AppSheetChoice(
+                  label: '$i',
+                  selected: current == i,
+                  onTap: () async {
+                    await settings.setDownloadConcurrent(i);
+                    if (context.mounted) Navigator.pop(context);
+                  },
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// 设置 · 下载存储上限
 class StorageLimitSheet extends StatelessWidget {
   final SettingsController settings;
