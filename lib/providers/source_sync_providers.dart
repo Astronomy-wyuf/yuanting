@@ -1,15 +1,17 @@
-import 'package:flutter/foundation.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-
 import '../services/settings_service.dart';
 import '../utils/constants.dart';
 import 'app_providers.dart';
 import 'source_providers.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 /// 书源订阅同步：
 /// - 启动时距上次同步超过 24 小时则后台自动同步一次；
-/// - 设置页 / 书源页可手动触发。
-class SourceSyncService extends ChangeNotifier {
+/// - 书源管理页可手动触发（走 SourcesController.syncSubscribed）。
+///
+/// 普通类而非 ChangeNotifier：启动自动同步无 UI 订阅，
+/// 挂在 ChangeNotifierProvider 上会因无人 watch 被立即销毁，
+/// 异步完成后触碰已销毁实例会抛「used after being disposed」。
+class SourceSyncService {
   final SourcesController sources;
   final AppSettingsService settings;
 
@@ -36,7 +38,6 @@ class SourceSyncService extends ChangeNotifier {
   Future<bool> sync({bool quiet = false}) async {
     if (syncing) return false;
     syncing = true;
-    if (!quiet) notifyListeners();
     try {
       final result = await sources.syncSubscribed();
       await settings.setLastSourceSyncMs(DateTime.now().millisecondsSinceEpoch);
@@ -49,12 +50,11 @@ class SourceSyncService extends ChangeNotifier {
       return false;
     } finally {
       syncing = false;
-      notifyListeners();
     }
   }
 }
 
-final sourceSyncServiceProvider = ChangeNotifierProvider<SourceSyncService>((ref) {
+final sourceSyncServiceProvider = Provider<SourceSyncService>((ref) {
   return SourceSyncService(
     sources: ref.watch(sourcesControllerProvider),
     settings: ref.watch(settingsServiceProvider),
